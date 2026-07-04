@@ -164,7 +164,7 @@ function doGet(e) {
           const ids2 = sheet2.getRange(4, idCol, lastRow2 - 3, 1).getValues();
           for (let i = 0; i < ids2.length; i++) {
             if (String(ids2[i][0]) === String(p.id)) {
-              sheet2.getRange(4 + i, linkCol).setValue(decodeURIComponent(p.url || ''));
+              sheet2.getRange(4 + i, linkCol).setValue(p.url || '');
               break;
             }
           }

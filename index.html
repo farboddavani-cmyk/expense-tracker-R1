@@ -2221,7 +2221,7 @@ async function uploadToSheets(entry) {
           action: 'updateReceipt',
           type: entry.type,
           id: entry.id,
-          url: encodeURIComponent('data:image/jpeg;base64,' + raw.substring(0, 4000))
+          url: 'data:image/jpeg;base64,' + raw.substring(0, 4000)
         }));
         toast('Saved to Google Sheets + receipt ✓', 'success');
       } catch(re) {
