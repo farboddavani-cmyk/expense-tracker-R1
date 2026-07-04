@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head><title>Sheets Test</title></head>
+<body style="font-family:sans-serif;padding:20px">
+<h2>Apps Script Connection Test</h2>
+<button onclick="testWrite()">Send Test Expense</button>
+<button onclick="testRead()">Read Sheet</button>
+<pre id="out" style="background:#eee;padding:10px;margin-top:10px"></pre>
+<script>
+const URL = 'https://script.google.com/macros/s/AKfycbyvcPmMXV1nWu7PlMG-xTUKr1_QCwtS0XjHNqd_3v6zdrwTkneOPl60-IHX_N6SXfQ/exec';
+
+function log(msg) {
+  document.getElementById('out').textContent += msg + '\n';
+}
+
+function testWrite() {
+  log('Sending test expense via script tag...');
+  const params = 'action=add&type=expense&date=2026-06-29&vendor=TEST&desc=TestDesc&category=Advertising&amount=99&currency=USD&method=Cash&taxDeductible=Yes&id=test_' + Date.now();
+  const s = document.createElement('script');
+  s.src = URL + '?' + params;
+  s.onload = () => { log('✅ Script tag loaded — check your sheet!'); s.remove(); };
+  s.onerror = () => { log('⚠️ Script tag onerror (still may have written) — check your sheet!'); s.remove(); };
+  document.head.appendChild(s);
+}
+
+async function testRead() {
+  log('Reading sheet...');
+  try {
+    const r = await fetch(URL + '?action=read&type=expense', {mode:'cors'});
+    const d = await r.json();
+    log('✅ Read OK — rows: ' + d.rows.length);
+    log(JSON.stringify(d.rows.slice(-2), null, 2));
+  } catch(e) {
+    log('❌ Read failed: ' + e.message);
+  }
+}
+</script>
+</body>
+</html>

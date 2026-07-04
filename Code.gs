@@ -107,6 +107,72 @@ function doGet(e) {
     }
 
     // ── DELETE ──────────────────────────────────────────────────────────────
+    // ── Receipt chunked upload ───────────────────────────────────────────────
+    if (action === 'receiptChunk') {
+      const cache = CacheService.getScriptCache();
+      const key = 'rc_' + p.id + '_' + p.chunk;
+      cache.put(key, decodeURIComponent(p.data || ''), 600); // 10 min TTL
+      // Also store metadata on chunk 0
+      if (String(p.chunk) === '0') {
+        cache.put('rm_' + p.id, JSON.stringify({ total: p.total, mime: p.mime, type: p.type }), 600);
+      }
+      return ok({ chunk: p.chunk });
+    }
+
+    if (action === 'receiptDone') {
+      try {
+        const cache = CacheService.getScriptCache();
+        const meta = JSON.parse(cache.get('rm_' + p.id) || '{}');
+        const total = parseInt(meta.total || 0);
+        const mime  = meta.mime || 'image/jpeg';
+        const type  = meta.type || p.type || 'expense';
+        let raw = '';
+        for (let i = 0; i < total; i++) {
+          raw += (cache.get('rc_' + p.id + '_' + i) || '');
+        }
+        if (!raw) return err('No chunks found');
+        const ext    = mime.includes('pdf') ? 'pdf' : 'jpg';
+        const folder = type === 'income' ? INVOICES_FOLDER : RECEIPTS_FOLDER;
+        const url    = uploadFile('data:' + mime + ';base64,' + raw, (type === 'income' ? 'invoice_' : 'receipt_') + p.id + '.' + ext, folder);
+        // Write link to sheet
+        const sheet3 = ss.getSheetByName(type === 'income' ? INC_SHEET : EXP_SHEET);
+        if (sheet3 && url) {
+          const idCol3   = type === 'income' ? 9  : 14;
+          const linkCol3 = type === 'income' ? 8  : 13;
+          const lr3 = sheet3.getLastRow();
+          if (lr3 >= 4) {
+            const ids3 = sheet3.getRange(4, idCol3, lr3 - 3, 1).getValues();
+            for (let i = 0; i < ids3.length; i++) {
+              if (String(ids3[i][0]) === String(p.id)) {
+                sheet3.getRange(4 + i, linkCol3).setValue(url);
+                break;
+              }
+            }
+          }
+        }
+        return ok({ url: url });
+      } catch(ex) { return err('receiptDone failed: ' + ex.message); }
+    }
+
+    if (action === 'updateReceipt') {
+      const sheet2 = ss.getSheetByName(p.type === 'income' ? INC_SHEET : EXP_SHEET);
+      if (sheet2) {
+        const idCol   = p.type === 'income' ? 9  : 14;
+        const linkCol = p.type === 'income' ? 8  : 13;
+        const lastRow2 = sheet2.getLastRow();
+        if (lastRow2 >= 4) {
+          const ids2 = sheet2.getRange(4, idCol, lastRow2 - 3, 1).getValues();
+          for (let i = 0; i < ids2.length; i++) {
+            if (String(ids2[i][0]) === String(p.id)) {
+              sheet2.getRange(4 + i, linkCol).setValue(decodeURIComponent(p.url || ''));
+              break;
+            }
+          }
+        }
+      }
+      return ok({ updated: true });
+    }
+
     if (action === 'delete') {
       const sheetName = type === 'income' ? INC_SHEET : EXP_SHEET;
       const idCol     = type === 'income' ? 9 : 14;
@@ -197,8 +263,50 @@ function doPost(e) {
 //  HELPERS
 // ═══════════════════════════════════════════════════════════════════════════
 function nextEmptyRow(sheet, startRow) {
-  const last = sheet.getLastRow();
-  return last < startRow ? startRow : last + 1;
+  // Scan column A from startRow to find first truly empty cell
+  // This avoids appending after the TOTAL row when setup created 500 blank rows
+  const data = sheet.getRange(startRow, 1, Math.max(sheet.getLastRow() - startRow + 2, 1), 1).getValues();
+  for (let i = 0; i < data.length; i++) {
+    if (data[i][0] === '' || data[i][0] === null) return startRow + i;
+  }
+  return startRow + data.length;
+}
+
+// ── doPost: receives receipt/invoice image and uploads to Google Drive ──────
+function doPost(e) {
+  try {
+    const data     = JSON.parse(e.postData.contents || e.postData.getDataAsString());
+    const id       = data.id       || '';
+    const type     = data.type     || 'expense';
+    const base64   = data.base64   || '';
+    const fileName = data.fileName || ('receipt_' + id + '.jpg');
+    if (!base64 || !id) return ok({ url: '' });
+
+    const folderName = type === 'income' ? INVOICES_FOLDER : RECEIPTS_FOLDER;
+    const url = uploadFile(base64, fileName, folderName);
+
+    // Update the receipt/invoice link column in the sheet
+    const ss    = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(type === 'income' ? INC_SHEET : EXP_SHEET);
+    if (sheet && url) {
+      // Find the row with this ID (column 14 for expense, col 9 for income)
+      const idCol   = type === 'income' ? 9  : 14;
+      const linkCol = type === 'income' ? 8  : 13;
+      const lastRow = sheet.getLastRow();
+      if (lastRow >= 4) {
+        const ids = sheet.getRange(4, idCol, lastRow - 3, 1).getValues();
+        for (let i = 0; i < ids.length; i++) {
+          if (String(ids[i][0]) === String(id)) {
+            sheet.getRange(4 + i, linkCol).setValue(url);
+            break;
+          }
+        }
+      }
+    }
+    return ok({ url: url });
+  } catch(ex) {
+    return err(ex.message);
+  }
 }
 
 function getOrCreateFolder(name) {

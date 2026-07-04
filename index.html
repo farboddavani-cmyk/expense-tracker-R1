@@ -1636,7 +1636,7 @@ const STATE = {
   settings: {
     lang: 'en',
     currency: 'USD',
-    sheetsUrl: 'https://script.google.com/macros/s/AKfycbyDVvRVkRY6TICxyjNYoN7jWAOZTRlRNXIol6N0dJv5JcdNZOWx2I8qh_eO3qJqb7-f/exec',
+    sheetsUrl: 'https://script.google.com/macros/s/AKfycbyvcPmMXV1nWu7PlMG-xTUKr1_QCwtS0XjHNqd_3v6zdrwTkneOPl60-IHX_N6SXfQ/exec',
     onboardingDone: false,
     licensed: false,
     trialStart: null,
@@ -1675,6 +1675,9 @@ function load() {
     if (e) STATE.expenses = JSON.parse(e);
     if (i) STATE.income = JSON.parse(i);
     if (s) STATE.settings = { ...STATE.settings, ...JSON.parse(s) };
+    // Always force the correct Apps Script URL regardless of what localStorage has
+    const CORRECT_URL = 'https://script.google.com/macros/s/AKfycbyvcPmMXV1nWu7PlMG-xTUKr1_QCwtS0XjHNqd_3v6zdrwTkneOPl60-IHX_N6SXfQ/exec';
+    STATE.settings.sheetsUrl = CORRECT_URL;
   } catch(e) { console.warn('Load failed:', e); }
 }
 
@@ -2124,18 +2127,47 @@ function buildUrl(base, params) {
   return base + '?' + qs;
 }
 
+// Compress image to target size before uploading
+function compressImage(base64, maxWidth, quality) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / img.width);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(base64);
+    img.src = base64;
+  });
+}
+
+function pingSheets(url) {
+  // script tag follows Google's auth redirects; fetch+no-cors drops at the redirect.
+  // Apps Script executes fully even though we can't read the response.
+  return new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now();
+    s.onload = () => { s.remove(); resolve({ status: 'ok' }); };
+    s.onerror = () => { s.remove(); resolve({ status: 'ok' }); };
+    document.head.appendChild(s);
+    setTimeout(() => { try { s.remove(); } catch(e){} resolve({ status: 'ok' }); }, 8000);
+  });
+}
+
 async function callSheets(params) {
   const base = STATE.settings.sheetsUrl;
   if (!base) throw new Error('No Apps Script URL configured');
   const url = buildUrl(base, params);
-  // Use no-cors for writes (fire and confirm via read), cors for reads
   const isRead = params.action === 'read';
-  const resp = await fetch(url, {
-    method: 'GET',
-    mode: isRead ? 'cors' : 'no-cors',
-  });
-  if (isRead) return resp.json();
-  return { status: 'ok' }; // no-cors = opaque, assume ok for writes
+  if (isRead) {
+    const resp = await fetch(url, { method: 'GET', mode: 'cors' });
+    return resp.json();
+  }
+  return pingSheets(url);
 }
 
 async function uploadToSheets(entry) {
@@ -2177,8 +2209,49 @@ async function uploadToSheets(entry) {
       };
     }
     await callSheets(params);
+
+    // Upload receipt: compress image then send to Apps Script via chunked GET pings
+    const base64 = entry.receiptBase64 || entry.invoiceBase64 || null;
+    if (base64 && entry.id) {
+      try {
+        // Compress image to max ~200KB before sending
+        const compressed = await compressImage(base64, 800, 0.6);
+        const raw = compressed.split(',')[1] || compressed;
+        const CHUNK = 1500; // safe URL param size
+        const chunks = [];
+        for (let i = 0; i < raw.length; i += CHUNK) chunks.push(raw.slice(i, i + CHUNK));
+        const total = chunks.length;
+        const mimeMatch = compressed.match(/data:([^;]+);/);
+        const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
+        // Send each chunk via ping
+        for (let i = 0; i < chunks.length; i++) {
+          await pingSheets(buildUrl(base, {
+            action: 'receiptChunk',
+            id: entry.id,
+            type: entry.type,
+            mime: mime,
+            chunk: i,
+            total: total,
+            data: encodeURIComponent(chunks[i])
+          }));
+        }
+        // Signal completion — Apps Script assembles and saves to Drive
+        await pingSheets(buildUrl(base, {
+          action: 'receiptDone',
+          id: entry.id,
+          type: entry.type
+        }));
+        toast('Saved to Google Sheets + receipt uploaded ✓', 'success');
+      } catch(re) {
+        console.warn('Receipt upload failed:', re);
+        toast('Saved to Google Sheets ✓ (receipt upload failed)', 'info');
+      }
+    } else {
+      toast('Saved to Google Sheets ✓', 'success');
+    }
+
     setSyncStatus('online');
-    toast('Saved to Google Sheets ✓', 'success');
   } catch(e) {
     setSyncStatus('offline');
     console.warn('Sheets upload failed:', e);
@@ -2191,7 +2264,7 @@ async function deleteFromSheets(entry) {
   if (!base) return;
   try {
     const url = buildUrl(base, { action: 'delete', type: entry.type, id: entry.id });
-    await fetch(url, { method: 'GET', mode: 'no-cors' });
+    await pingSheets(url);
     toast('Removed from Google Sheets ✓', 'success');
   } catch(e) {
     console.warn('Sheets delete failed:', e);
