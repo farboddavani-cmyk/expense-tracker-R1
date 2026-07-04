@@ -2210,38 +2210,36 @@ async function uploadToSheets(entry) {
     }
     await callSheets(params);
 
-    // Upload receipt: compress image then send to Apps Script via chunked GET pings
+    // Upload receipt: compress to thumbnail then send via single GET ping
     const base64 = entry.receiptBase64 || entry.invoiceBase64 || null;
     if (base64 && entry.id) {
       try {
-        // Compress image to max ~200KB before sending
-        const compressed = await compressImage(base64, 800, 0.6);
+        // Compress aggressively to ~8KB so it fits in one URL
+        const compressed = await compressImage(base64, 300, 0.4);
         const raw = compressed.split(',')[1] || compressed;
-        const CHUNK = 1500; // safe URL param size
-        const chunks = [];
-        for (let i = 0; i < raw.length; i += CHUNK) chunks.push(raw.slice(i, i + CHUNK));
-        const total = chunks.length;
         const mimeMatch = compressed.match(/data:([^;]+);/);
         const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
 
-        // Send each chunk via ping
-        for (let i = 0; i < chunks.length; i++) {
+        if (raw.length <= 8000) {
+          // Small enough — send in one ping
           await pingSheets(buildUrl(base, {
-            action: 'receiptChunk',
-            id: entry.id,
-            type: entry.type,
-            mime: mime,
-            chunk: i,
-            total: total,
-            data: encodeURIComponent(chunks[i])
+            action: 'receiptChunk', id: entry.id, type: entry.type,
+            mime: mime, chunk: 0, total: 1, data: encodeURIComponent(raw)
           }));
+          await pingSheets(buildUrl(base, { action: 'receiptDone', id: entry.id, type: entry.type }));
+        } else {
+          // Still too large — send in chunks of 3000 chars
+          const CHUNK = 3000;
+          const chunks = [];
+          for (let i = 0; i < raw.length; i += CHUNK) chunks.push(raw.slice(i, i + CHUNK));
+          for (let i = 0; i < chunks.length; i++) {
+            await pingSheets(buildUrl(base, {
+              action: 'receiptChunk', id: entry.id, type: entry.type,
+              mime: mime, chunk: i, total: chunks.length, data: encodeURIComponent(chunks[i])
+            }));
+          }
+          await pingSheets(buildUrl(base, { action: 'receiptDone', id: entry.id, type: entry.type }));
         }
-        // Signal completion — Apps Script assembles and saves to Drive
-        await pingSheets(buildUrl(base, {
-          action: 'receiptDone',
-          id: entry.id,
-          type: entry.type
-        }));
         toast('Saved to Google Sheets + receipt uploaded ✓', 'success');
       } catch(re) {
         console.warn('Receipt upload failed:', re);
