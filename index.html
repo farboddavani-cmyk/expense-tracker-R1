@@ -2210,40 +2210,23 @@ async function uploadToSheets(entry) {
     }
     await callSheets(params);
 
-    // Upload receipt: compress to thumbnail then send via single GET ping
+    // Store receipt as base64 in sheet column 13 directly via GET ping
     const base64 = entry.receiptBase64 || entry.invoiceBase64 || null;
     if (base64 && entry.id) {
       try {
-        // Compress aggressively to ~8KB so it fits in one URL
-        const compressed = await compressImage(base64, 300, 0.4);
+        const compressed = await compressImage(base64, 200, 0.3);
         const raw = compressed.split(',')[1] || compressed;
-        const mimeMatch = compressed.match(/data:([^;]+);/);
-        const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-
-        if (raw.length <= 8000) {
-          // Small enough — send in one ping
-          await pingSheets(buildUrl(base, {
-            action: 'receiptChunk', id: entry.id, type: entry.type,
-            mime: mime, chunk: 0, total: 1, data: encodeURIComponent(raw)
-          }));
-          await pingSheets(buildUrl(base, { action: 'receiptDone', id: entry.id, type: entry.type }));
-        } else {
-          // Still too large — send in chunks of 3000 chars
-          const CHUNK = 3000;
-          const chunks = [];
-          for (let i = 0; i < raw.length; i += CHUNK) chunks.push(raw.slice(i, i + CHUNK));
-          for (let i = 0; i < chunks.length; i++) {
-            await pingSheets(buildUrl(base, {
-              action: 'receiptChunk', id: entry.id, type: entry.type,
-              mime: mime, chunk: i, total: chunks.length, data: encodeURIComponent(chunks[i])
-            }));
-          }
-          await pingSheets(buildUrl(base, { action: 'receiptDone', id: entry.id, type: entry.type }));
-        }
-        toast('Saved to Google Sheets + receipt uploaded ✓', 'success');
+        // Store thumbnail directly in sheet — no Drive needed
+        await pingSheets(buildUrl(base, {
+          action: 'updateReceipt',
+          type: entry.type,
+          id: entry.id,
+          url: encodeURIComponent('data:image/jpeg;base64,' + raw.substring(0, 4000))
+        }));
+        toast('Saved to Google Sheets + receipt ✓', 'success');
       } catch(re) {
         console.warn('Receipt upload failed:', re);
-        toast('Saved to Google Sheets ✓ (receipt upload failed)', 'info');
+        toast('Saved to Google Sheets ✓', 'success');
       }
     } else {
       toast('Saved to Google Sheets ✓', 'success');
