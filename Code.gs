@@ -252,12 +252,7 @@ function doGet(e) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  doPost — not used by app (GET handles everything), kept for safety
-// ═══════════════════════════════════════════════════════════════════════════
-function doPost(e) {
-  return err('This app uses GET requests only. Check your Ledger Pro version.');
-}
+// doPost handled below
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  HELPERS

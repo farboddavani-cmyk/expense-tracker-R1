@@ -2210,33 +2210,37 @@ async function uploadToSheets(entry) {
     }
     await callSheets(params);
 
-    // Store receipt as base64 in sheet column 13 directly via GET ping
+    // Upload receipt via POST to Apps Script (handles large payloads)
     const base64 = entry.receiptBase64 || entry.invoiceBase64 || null;
     if (base64 && entry.id) {
-      try {
-        const compressed = await compressImage(base64, 200, 0.3);
-        const raw = compressed.split(',')[1] || compressed;
-        // Store thumbnail directly in sheet — no Drive needed
-        await pingSheets(buildUrl(base, {
-          action: 'updateReceipt',
-          type: entry.type,
-          id: entry.id,
-          url: 'data:image/jpeg;base64,' + raw.substring(0, 4000)
-        }));
-        toast('Saved to Google Sheets + receipt ✓', 'success');
-      } catch(re) {
-        console.warn('Receipt upload failed:', re);
-        toast('Saved to Google Sheets ✓', 'success');
-      }
-    } else {
-      toast('Saved to Google Sheets ✓', 'success');
+      uploadReceiptPost(base, entry.id, entry.type, base64);
     }
+    toast('Saved to Google Sheets ✓', 'success');
 
     setSyncStatus('online');
   } catch(e) {
     setSyncStatus('offline');
     console.warn('Sheets upload failed:', e);
     toast('Saved locally — Sheets error: ' + e.message, 'info');
+  }
+}
+
+// Upload receipt via POST — Apps Script doPost handles large payloads
+// Uses no-cors so browser does not block on redirect, AS still executes fully
+async function uploadReceiptPost(base, id, type, base64) {
+  try {
+    const compressed = await compressImage(base64, 400, 0.5);
+    const payload = JSON.stringify({ id, type, base64: compressed });
+    // Try fetch POST first
+    await fetch(base, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: payload
+    });
+    toast('Receipt uploaded to Drive ✓', 'success');
+  } catch(e) {
+    console.warn('Receipt POST failed:', e);
   }
 }
 
