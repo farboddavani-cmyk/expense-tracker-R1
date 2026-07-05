@@ -1013,6 +1013,10 @@ img{max-width:100%;display:block}
               <img id="receipt-preview" class="receipt-preview" alt="Receipt preview"/>
               <button class="btn btn-ghost btn-sm mt-4" id="receipt-remove">Remove</button>
             </div>
+            <div style="margin-top:8px">
+              <label class="field-label" style="font-size:12px;color:var(--muted)">Or paste Google Drive link</label>
+              <input type="url" id="receipt-drive-url" class="field-input" placeholder="https://drive.google.com/..." style="font-size:13px"/>
+            </div>
           </div>
           <div class="field">
             <label class="field-label" id="lbl-notes">Notes (optional)</label>
@@ -1636,7 +1640,7 @@ const STATE = {
   settings: {
     lang: 'en',
     currency: 'USD',
-    sheetsUrl: 'https://script.google.com/macros/s/AKfycbyvcPmMXV1nWu7PlMG-xTUKr1_QCwtS0XjHNqd_3v6zdrwTkneOPl60-IHX_N6SXfQ/exec',
+    sheetsUrl: 'https://script.google.com/a/macros/rbgcconstruction.com/s/AKfycbyWvU61_vWDk6bkTtEHNPpohjTkp-O4wkC7ogGxSlBQ9NxbtCT0s8lV13y28ajMunQZ/exec',
     onboardingDone: false,
     licensed: false,
     trialStart: null,
@@ -1676,7 +1680,7 @@ function load() {
     if (i) STATE.income = JSON.parse(i);
     if (s) STATE.settings = { ...STATE.settings, ...JSON.parse(s) };
     // Always force the correct Apps Script URL regardless of what localStorage has
-    const CORRECT_URL = 'https://script.google.com/macros/s/AKfycbyvcPmMXV1nWu7PlMG-xTUKr1_QCwtS0XjHNqd_3v6zdrwTkneOPl60-IHX_N6SXfQ/exec';
+    const CORRECT_URL = 'https://script.google.com/a/macros/rbgcconstruction.com/s/AKfycbyWvU61_vWDk6bkTtEHNPpohjTkp-O4wkC7ogGxSlBQ9NxbtCT0s8lV13y28ajMunQZ/exec';
     STATE.settings.sheetsUrl = CORRECT_URL;
   } catch(e) { console.warn('Load failed:', e); }
 }
@@ -1933,6 +1937,8 @@ function resetLogForm() {
   document.getElementById('inc-notes').value = '';
   clearReceiptUpload();
   clearInvoiceUpload();
+  const driveUrl = document.getElementById('receipt-drive-url');
+  if (driveUrl) driveUrl.value = '';
   setLogMode(STATE.ui.logMode);
 }
 
@@ -2079,7 +2085,7 @@ async function saveEntry() {
       miles: parseFloat(document.getElementById('exp-miles').value) || 0,
       sqft: parseFloat(document.getElementById('exp-sqft').value) || 0,
       notes: document.getElementById('exp-notes').value.trim(),
-      receiptUrl: null, receiptBase64: STATE.ui.receiptBase64 || null,
+      receiptUrl: document.getElementById('receipt-drive-url')?.value.trim() || null, receiptBase64: STATE.ui.receiptBase64 || null,
       createdAt: Date.now()
     };
     STATE.expenses.unshift(entry);
@@ -2193,6 +2199,7 @@ async function uploadToSheets(entry) {
         miles:         entry.miles         || 0,
         sqft:          entry.sqft          || 0,
         notes:         entry.notes         || '',
+        receiptUrl:    entry.receiptUrl    || '',
       };
     } else {
       params = {

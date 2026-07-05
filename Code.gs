@@ -78,7 +78,7 @@ function doGet(e) {
           parseFloat(p.miles)   || 0,
           parseFloat(p.sqft)    || 0,
           p.notes         || '',
-          '',                       // receipt link (future)
+          p.receiptUrl    || '',    // receipt/drive link
           p.id            || ''
         ]]);
         sheet.getRange(row, 5).setNumberFormat('"$"#,##0.00');
