@@ -78,7 +78,15 @@ function doGet(e) {
           parseFloat(p.miles)   || 0,
           parseFloat(p.sqft)    || 0,
           p.notes         || '',
-          p.receiptUrl    || '',    // receipt/drive link
+          (function(){
+            var u = p.receiptUrl || '';
+            if (u.indexOf('base64url,') !== -1) {
+              var b64 = u.split('base64url,')[1].replace(/-/g,'+').replace(/_/g,'/');
+              var pad = b64.length%4 ? b64+'===='.slice(b64.length%4) : b64;
+              return 'data:image/jpeg;base64,'+pad;
+            }
+            return u;
+          })(),    // receipt/drive link
           p.id            || ''
         ]]);
         sheet.getRange(row, 5).setNumberFormat('"$"#,##0.00');

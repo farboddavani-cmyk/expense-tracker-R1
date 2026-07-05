@@ -1640,7 +1640,7 @@ const STATE = {
   settings: {
     lang: 'en',
     currency: 'USD',
-    sheetsUrl: 'https://script.google.com/macros/s/AKfycbwCZtyNMYYcwUFHhaew40VSL9ssbBawrTw4aWlVZTTWUyp88gewj_Ct_FK8obA-y57XjQ/exec',
+    sheetsUrl: 'https://script.google.com/macros/s/AKfycbxNE2F7f_zpuJJE8aFXdRF5lLXvLaueVbeP4z1AjuO_93Dnjmt0NbUmbvHbVNxxOun9hA/exec',
     onboardingDone: false,
     licensed: false,
     trialStart: null,
@@ -1680,7 +1680,7 @@ function load() {
     if (i) STATE.income = JSON.parse(i);
     if (s) STATE.settings = { ...STATE.settings, ...JSON.parse(s) };
     // Always force the correct Apps Script URL regardless of what localStorage has
-    const CORRECT_URL = 'https://script.google.com/macros/s/AKfycbwCZtyNMYYcwUFHhaew40VSL9ssbBawrTw4aWlVZTTWUyp88gewj_Ct_FK8obA-y57XjQ/exec';
+    const CORRECT_URL = 'https://script.google.com/macros/s/AKfycbxNE2F7f_zpuJJE8aFXdRF5lLXvLaueVbeP4z1AjuO_93Dnjmt0NbUmbvHbVNxxOun9hA/exec';
     STATE.settings.sheetsUrl = CORRECT_URL;
   } catch(e) { console.warn('Load failed:', e); }
 }
@@ -2177,6 +2177,15 @@ async function callSheets(params) {
 }
 
 async function uploadToSheets(entry) {
+  // Pre-compress receipt before building params
+  if (entry.receiptBase64) {
+    try {
+      const thumb = await compressImage(entry.receiptBase64, 80, 0.3);
+      const raw = thumb.split(',')[1] || thumb;
+      const safe = raw.replace(/[+]/g, '-').replace(/[/]/g, '_').replace(/=/g, '');
+      entry._receiptSafe = 'data:image/jpeg;base64url,' + safe;
+    } catch(e) { console.warn('compress failed', e); }
+  }
   const base = STATE.settings.sheetsUrl;
   if (!base) return;
   setSyncStatus('syncing');
@@ -2199,7 +2208,7 @@ async function uploadToSheets(entry) {
         miles:         entry.miles         || 0,
         sqft:          entry.sqft          || 0,
         notes:         entry.notes         || '',
-        receiptUrl:    entry.receiptUrl    || '',
+        receiptUrl:    entry._receiptSafe || entry.receiptUrl || '',
       };
     } else {
       params = {
@@ -2217,11 +2226,6 @@ async function uploadToSheets(entry) {
     }
     await callSheets(params);
 
-    // Upload receipt as tiny thumbnail via GET (fits in URL, no CORS issues)
-    const base64 = entry.receiptBase64 || entry.invoiceBase64 || null;
-    if (base64 && entry.id) {
-      uploadReceiptGet(base, entry.id, entry.type, base64);
-    }
     toast('Saved to Google Sheets ✓', 'success');
 
     setSyncStatus('online');
