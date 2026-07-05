@@ -160,11 +160,18 @@ function doGet(e) {
         const idCol   = p.type === 'income' ? 9  : 14;
         const linkCol = p.type === 'income' ? 8  : 13;
         const lastRow2 = sheet2.getLastRow();
+        // Convert URL-safe base64 back to standard base64
+        let urlVal = p.url || '';
+        if (urlVal.includes('base64url,')) {
+          const b64 = urlVal.split('base64url,')[1].replace(/-/g, '+').replace(/_/g, '/');
+          const pad = b64.length % 4 ? b64 + '===='.slice(b64.length % 4) : b64;
+          urlVal = 'data:image/jpeg;base64,' + pad;
+        }
         if (lastRow2 >= 4) {
           const ids2 = sheet2.getRange(4, idCol, lastRow2 - 3, 1).getValues();
           for (let i = 0; i < ids2.length; i++) {
             if (String(ids2[i][0]) === String(p.id)) {
-              sheet2.getRange(4 + i, linkCol).setValue(p.url || '');
+              sheet2.getRange(4 + i, linkCol).setValue(urlVal);
               break;
             }
           }

@@ -1640,7 +1640,7 @@ const STATE = {
   settings: {
     lang: 'en',
     currency: 'USD',
-    sheetsUrl: 'https://script.google.com/a/macros/rbgcconstruction.com/s/AKfycbyWvU61_vWDk6bkTtEHNPpohjTkp-O4wkC7ogGxSlBQ9NxbtCT0s8lV13y28ajMunQZ/exec',
+    sheetsUrl: 'https://script.google.com/macros/s/AKfycbwCZtyNMYYcwUFHhaew40VSL9ssbBawrTw4aWlVZTTWUyp88gewj_Ct_FK8obA-y57XjQ/exec',
     onboardingDone: false,
     licensed: false,
     trialStart: null,
@@ -1680,7 +1680,7 @@ function load() {
     if (i) STATE.income = JSON.parse(i);
     if (s) STATE.settings = { ...STATE.settings, ...JSON.parse(s) };
     // Always force the correct Apps Script URL regardless of what localStorage has
-    const CORRECT_URL = 'https://script.google.com/a/macros/rbgcconstruction.com/s/AKfycbyWvU61_vWDk6bkTtEHNPpohjTkp-O4wkC7ogGxSlBQ9NxbtCT0s8lV13y28ajMunQZ/exec';
+    const CORRECT_URL = 'https://script.google.com/macros/s/AKfycbwCZtyNMYYcwUFHhaew40VSL9ssbBawrTw4aWlVZTTWUyp88gewj_Ct_FK8obA-y57XjQ/exec';
     STATE.settings.sheetsUrl = CORRECT_URL;
   } catch(e) { console.warn('Load failed:', e); }
 }
@@ -2235,15 +2235,18 @@ async function uploadToSheets(entry) {
 // Upload receipt as tiny thumbnail via GET ping — fits in URL, follows Google redirects
 async function uploadReceiptGet(base, id, type, base64) {
   try {
-    // Compress to tiny 80x80 thumbnail ~1-2KB = fits in URL
+    // Compress to tiny thumbnail
     const thumb = await compressImage(base64, 80, 0.3);
     const raw = thumb.split(',')[1] || thumb;
-    // raw should be ~1000-2000 chars — safe for URL
+    // Convert to URL-safe base64 (replace +→-, /→_, remove =)
+    // Apps Script e.parameter auto-decodes %2B back to + but then treats + as space
+    // URL-safe alphabet avoids this entirely
+    const safe = raw.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     await pingSheets(buildUrl(base, {
       action: 'updateReceipt',
       type: type,
       id: id,
-      url: 'data:image/jpeg;base64,' + raw
+      url: 'data:image/jpeg;base64url,' + safe
     }));
     toast('Receipt saved ✓', 'success');
   } catch(e) {
