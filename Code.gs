@@ -81,9 +81,15 @@ function doGet(e) {
           (function(){
             var u = p.receiptUrl || '';
             if (u.indexOf('base64url,') !== -1) {
-              var b64 = u.split('base64url,')[1].replace(/-/g,'+').replace(/_/g,'/');
-              var pad = b64.length%4 ? b64+'===='.slice(b64.length%4) : b64;
-              return 'data:image/jpeg;base64,'+pad;
+              try {
+                var b64 = u.split('base64url,')[1].replace(/-/g,'+').replace(/_/g,'/');
+                var pad = b64.length%4 ? b64+'===='.slice(b64.length%4) : b64;
+                var blob = Utilities.newBlob(Utilities.base64Decode(pad), 'image/jpeg', 'receipt_'+p.id+'.jpg');
+                var folder = getOrCreateFolder(RECEIPTS_FOLDER);
+                var file = folder.createFile(blob);
+                file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+                return file.getUrl();
+              } catch(ex) { return ''; }
             }
             return u;
           })(),    // receipt/drive link
