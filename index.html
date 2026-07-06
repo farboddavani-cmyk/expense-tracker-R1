@@ -2186,6 +2186,15 @@ async function uploadToSheets(entry) {
       entry._receiptSafe = 'data:image/jpeg;base64url,' + safe;
     } catch(e) { console.warn('compress failed', e); }
   }
+  // Pre-compress invoice (income) the same way — mirrors the receipt path
+  if (entry.invoiceBase64) {
+    try {
+      const thumb = await compressImage(entry.invoiceBase64, 80, 0.3);
+      const raw = thumb.split(',')[1] || thumb;
+      const safe = raw.replace(/[+]/g, '-').replace(/[/]/g, '_').replace(/=/g, '');
+      entry._invoiceSafe = 'data:image/jpeg;base64url,' + safe;
+    } catch(e) { console.warn('invoice compress failed', e); }
+  }
   const base = STATE.settings.sheetsUrl;
   if (!base) return;
   setSyncStatus('syncing');
@@ -2222,6 +2231,7 @@ async function uploadToSheets(entry) {
         currency: entry.currency,
         status:   entry.status,
         notes:    entry.notes || '',
+        invoiceUrl: entry._invoiceSafe || entry.invoiceUrl || '',
       };
     }
     await callSheets(params);
