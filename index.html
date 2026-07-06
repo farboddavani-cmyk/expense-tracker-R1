@@ -2177,24 +2177,7 @@ async function callSheets(params) {
 }
 
 async function uploadToSheets(entry) {
-  // Pre-compress receipt before building params
-  if (entry.receiptBase64) {
-    try {
-      const thumb = await compressImage(entry.receiptBase64, 80, 0.3);
-      const raw = thumb.split(',')[1] || thumb;
-      const safe = raw.replace(/[+]/g, '-').replace(/[/]/g, '_').replace(/=/g, '');
-      entry._receiptSafe = 'data:image/jpeg;base64url,' + safe;
-    } catch(e) { console.warn('compress failed', e); }
-  }
-  // Pre-compress invoice (income) the same way — mirrors the receipt path
-  if (entry.invoiceBase64) {
-    try {
-      const thumb = await compressImage(entry.invoiceBase64, 80, 0.3);
-      const raw = thumb.split(',')[1] || thumb;
-      const safe = raw.replace(/[+]/g, '-').replace(/[/]/g, '_').replace(/=/g, '');
-      entry._invoiceSafe = 'data:image/jpeg;base64url,' + safe;
-    } catch(e) { console.warn('invoice compress failed', e); }
-  }
+  // Attachments are streamed separately in chunks (see uploadAttachmentChunked) so they can be full, readable resolution.
   const base = STATE.settings.sheetsUrl;
   if (!base) return;
   setSyncStatus('syncing');
@@ -2217,7 +2200,7 @@ async function uploadToSheets(entry) {
         miles:         entry.miles         || 0,
         sqft:          entry.sqft          || 0,
         notes:         entry.notes         || '',
-        receiptUrl:    entry._receiptSafe || entry.receiptUrl || '',
+        receiptUrl:    '',   // filled in later by uploadAttachmentChunked
       };
     } else {
       params = {
@@ -2231,10 +2214,11 @@ async function uploadToSheets(entry) {
         currency: entry.currency,
         status:   entry.status,
         notes:    entry.notes || '',
-        invoiceUrl: entry._invoiceSafe || entry.invoiceUrl || '',
+        invoiceUrl: '',   // filled in later by uploadAttachmentChunked
       };
     }
-    await callSheets(params);
+    await callSheets(params);              // create the row first (small + reliable)
+    await uploadAttachmentChunked(entry);  // then stream the full-res attachment in, if any
 
     toast('Saved to Google Sheets ✓', 'success');
 
@@ -2244,6 +2228,33 @@ async function uploadToSheets(entry) {
     console.warn('Sheets upload failed:', e);
     toast('Saved locally — Sheets error: ' + e.message, 'info');
   }
+}
+
+// Send a readable-quality receipt/invoice to Drive by splitting it into URL-safe base64
+// chunks. Avoids the single-request URL-length limit that used to force 80px thumbnails.
+async function uploadAttachmentChunked(entry) {
+  const base = STATE.settings.sheetsUrl;
+  const src  = entry.type === 'income' ? entry.invoiceBase64 : entry.receiptBase64;
+  if (!base || !src) return;
+  try {
+    let dataUrl, mime;
+    if (/^data:application\/pdf/i.test(src)) {
+      dataUrl = src; mime = 'application/pdf';                         // PDFs sent as-is
+    } else {
+      dataUrl = await compressImage(src, 1000, 0.6); mime = 'image/jpeg'; // readable, not a thumbnail
+    }
+    const b64   = dataUrl.split(',')[1] || '';
+    const safe  = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    const CHUNK = 6000;
+    const total = Math.ceil(safe.length / CHUNK);
+    for (let i = 0; i < total; i++) {
+      await pingSheets(buildUrl(base, {
+        action: 'attachChunk', id: entry.id, chunk: i, total: total,
+        mime: mime, atype: entry.type, data: safe.slice(i * CHUNK, (i + 1) * CHUNK)
+      }));
+    }
+    await pingSheets(buildUrl(base, { action: 'attachDone', id: entry.id, atype: entry.type }));
+  } catch(e) { console.warn('attachment upload failed', e); }
 }
 
 // Upload receipt as tiny thumbnail via GET ping — fits in URL, follows Google redirects
