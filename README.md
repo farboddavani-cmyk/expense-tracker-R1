@@ -152,7 +152,10 @@ git push -u origin main
 1. Open Google Sheets → **Extensions → Apps Script**
 2. Select all in `Code.gs`, delete, paste the new `Code.gs`
 3. Click **Save** (💾)
-4. Run `setupSheets()` once from the editor to create tabs with CA-aligned headers
+4. Run `setupSheets()` once from the editor to create tabs with CA-aligned headers.
+   It is safe to re-run: it preserves every existing data row, rebuilds only the
+   headers/formatting/formulas, and saves a timestamped backup copy of the whole
+   spreadsheet to your Drive first.
 5. **Deploy → New Deployment → Web App**
    - Execute as: **Me**
    - Who has access: **Anyone**
@@ -191,15 +194,9 @@ git push -u origin main
 
 ---
 
-## 💳 In-App Purchase
+## 💳 Licensing
 
-| Property | Value |
-|----------|-------|
-| Product ID | `ledger_unlock_full` |
-| Type | One-time (INAPP) |
-| Price | $9.99 |
-| Trial | 10 days from first launch |
-| Billing Library | Google Play Billing 7.0.0 |
+There is no trial, paywall, or in-app purchase. Every feature is always available.
 
 ---
 
@@ -208,10 +205,9 @@ git push -u origin main
 - **Frontend:** Single-file HTML + CSS + Vanilla JS
 - **PWA:** Web App Manifest + Service Worker
 - **Backend:** Google Apps Script (your own deployment)
-- **Storage:** Google Sheets (cloud) + localStorage (local)
+- **Storage:** Google Sheets (cloud) + localStorage (local, with retry queue)
 - **Files:** Google Drive (receipts & invoices)
-- **Android:** PWABuilder + Custom Kotlin (TrialManager + BillingManager)
-- **Billing:** Google Play Billing Library 7.0.0
+- **Android:** PWABuilder
 
 ---
 

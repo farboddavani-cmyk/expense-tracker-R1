@@ -1,17 +1,18 @@
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  Ledger Pro — Google Apps Script Backend  (Code.gs)                     ║
+// ║  Ledger Pro — Google Apps Script Backend  (Code.gs)                      ║
 // ║                                                                          ║
 // ║  SETUP (do this once):                                                   ║
 // ║  1. Paste this file into Extensions → Apps Script → Code.gs              ║
-// ║  2. Run setupSheets() from the editor to create tabs (skip if tabs exist)║
+// ║  2. Run setupSheets() from the editor (SAFE: never deletes your data)    ║
 // ║  3. Deploy → New Deployment → Web App                                    ║
 // ║        Execute as: Me  |  Who has access: Anyone                         ║
 // ║  4. Copy the /exec URL → Ledger Pro app → Settings → Apps Script URL     ║
 // ║                                                                          ║
 // ║  HOW IT WORKS:                                                           ║
-// ║  All app→sheet communication uses doGet() with named URL parameters.     ║
-// ║  GET requests are the only method that works reliably cross-origin with   ║
-// ║  Apps Script — no CORS preflight, no body dropping, no redirect issues.  ║
+// ║  Fast path — doPost() takes ONE JSON request that writes the row AND     ║
+// ║              uploads the receipt in a single round trip (~2-4s).         ║
+// ║  Fallback  — doGet() with URL params still works for older app builds    ║
+// ║              and for browsers where POST is blocked.                     ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 const EXP_SHEET       = 'Expense Log';
@@ -19,6 +20,7 @@ const INC_SHEET       = 'Income Log';
 const RECEIPTS_FOLDER = 'Ledger Pro Receipts';
 const INVOICES_FOLDER = 'Ledger Pro Invoices';
 const TAX_YEAR        = new Date().getFullYear();
+const DATA_START      = 4;   // first data row (rows 1-3 are title/note/header)
 
 // Expense sheet: 14 columns
 // Col: 1=Date 2=Vendor 3=Desc 4=Category 5=Amount 6=Currency
@@ -44,243 +46,25 @@ function err(msg) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  doGet — handles ALL requests from the app via URL parameters
-//
-//  ?action=add&type=expense&vendor=...&amount=...  → write expense row
-//  ?action=add&type=income&client=...&amount=...   → write income row
-//  ?action=delete&type=expense&id=...              → delete row by ID
-//  ?action=read&type=expense                       → return all expense rows
-//  ?action=read&type=income                        → return all income rows
+//  CORE WRITE HELPERS  (shared by doGet and doPost)
 // ═══════════════════════════════════════════════════════════════════════════
-function doGet(e) {
-  try {
-    const p      = e.parameter;
-    const action = (p.action || 'read').toLowerCase();
-    const type   = (p.type   || 'expense').toLowerCase();
-    const ss     = SpreadsheetApp.getActiveSpreadsheet();
 
-    // ── ADD ────────────────────────────────────────────────────────────────
-    if (action === 'add') {
-      if (type === 'expense') {
-        const sheet = ss.getSheetByName(EXP_SHEET);
-        if (!sheet) return err('Sheet "' + EXP_SHEET + '" not found — run setupSheets() first');
-        const row = nextEmptyRow(sheet, 4);
-        sheet.getRange(row, 1, 1, 14).setValues([[
-          p.date          || '',
-          p.vendor        || '',
-          p.desc          || '',
-          p.category      || '',
-          parseFloat(p.amount)  || 0,
-          p.currency      || 'USD',
-          p.method        || '',
-          p.taxDeductible || 'No',
-          p.scheduleC     || '',
-          parseFloat(p.miles)   || 0,
-          parseFloat(p.sqft)    || 0,
-          p.notes         || '',
-          (function(){
-            var u = p.receiptUrl || '';
-            if (u.indexOf('base64url,') !== -1) {
-              try {
-                var b64 = u.split('base64url,')[1].replace(/-/g,'+').replace(/_/g,'/');
-                var pad = b64.length%4 ? b64+'===='.slice(b64.length%4) : b64;
-                var blob = Utilities.newBlob(Utilities.base64Decode(pad), 'image/jpeg', 'receipt_'+p.id+'.jpg');
-                var folder = getOrCreateFolder(RECEIPTS_FOLDER);
-                var file = folder.createFile(blob);
-                file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-                return file.getUrl();
-              } catch(ex) { return ''; }
-            }
-            return u;
-          })(),    // receipt/drive link
-          p.id            || ''
-        ]]);
-        sheet.getRange(row, 5).setNumberFormat('"$"#,##0.00');
-        return ok({ row: row });
-      }
-
-      if (type === 'income') {
-        const sheet = ss.getSheetByName(INC_SHEET);
-        if (!sheet) return err('Sheet "' + INC_SHEET + '" not found — run setupSheets() first');
-        const row = nextEmptyRow(sheet, 4);
-        sheet.getRange(row, 1, 1, 9).setValues([[
-          p.date      || '',
-          p.client    || '',
-          p.invoice   || '',
-          parseFloat(p.amount) || 0,
-          p.currency  || 'USD',
-          p.status    || 'Unpaid',
-          p.notes     || '',
-          '',                     // invoice link (future)
-          p.id        || ''
-        ]]);
-        sheet.getRange(row, 4).setNumberFormat('"$"#,##0.00');
-        return ok({ row: row });
-      }
-      return err('Unknown type: ' + type);
-    }
-
-    // ── DELETE ──────────────────────────────────────────────────────────────
-    // ── Receipt chunked upload ───────────────────────────────────────────────
-    if (action === 'receiptChunk') {
-      const cache = CacheService.getScriptCache();
-      const key = 'rc_' + p.id + '_' + p.chunk;
-      cache.put(key, decodeURIComponent(p.data || ''), 600); // 10 min TTL
-      // Also store metadata on chunk 0
-      if (String(p.chunk) === '0') {
-        cache.put('rm_' + p.id, JSON.stringify({ total: p.total, mime: p.mime, type: p.type }), 600);
-      }
-      return ok({ chunk: p.chunk });
-    }
-
-    if (action === 'receiptDone') {
-      try {
-        const cache = CacheService.getScriptCache();
-        const meta = JSON.parse(cache.get('rm_' + p.id) || '{}');
-        const total = parseInt(meta.total || 0);
-        const mime  = meta.mime || 'image/jpeg';
-        const type  = meta.type || p.type || 'expense';
-        let raw = '';
-        for (let i = 0; i < total; i++) {
-          raw += (cache.get('rc_' + p.id + '_' + i) || '');
-        }
-        if (!raw) return err('No chunks found');
-        const ext    = mime.includes('pdf') ? 'pdf' : 'jpg';
-        const folder = type === 'income' ? INVOICES_FOLDER : RECEIPTS_FOLDER;
-        const url    = uploadFile('data:' + mime + ';base64,' + raw, (type === 'income' ? 'invoice_' : 'receipt_') + p.id + '.' + ext, folder);
-        // Write link to sheet
-        const sheet3 = ss.getSheetByName(type === 'income' ? INC_SHEET : EXP_SHEET);
-        if (sheet3 && url) {
-          const idCol3   = type === 'income' ? 9  : 14;
-          const linkCol3 = type === 'income' ? 8  : 13;
-          const lr3 = sheet3.getLastRow();
-          if (lr3 >= 4) {
-            const ids3 = sheet3.getRange(4, idCol3, lr3 - 3, 1).getValues();
-            for (let i = 0; i < ids3.length; i++) {
-              if (String(ids3[i][0]) === String(p.id)) {
-                sheet3.getRange(4 + i, linkCol3).setValue(url);
-                break;
-              }
-            }
-          }
-        }
-        return ok({ url: url });
-      } catch(ex) { return err('receiptDone failed: ' + ex.message); }
-    }
-
-    if (action === 'updateReceipt') {
-      const sheet2 = ss.getSheetByName(p.type === 'income' ? INC_SHEET : EXP_SHEET);
-      if (sheet2) {
-        const idCol   = p.type === 'income' ? 9  : 14;
-        const linkCol = p.type === 'income' ? 8  : 13;
-        const lastRow2 = sheet2.getLastRow();
-        // Convert URL-safe base64 back to standard base64
-        let urlVal = p.url || '';
-        if (urlVal.includes('base64url,')) {
-          const b64 = urlVal.split('base64url,')[1].replace(/-/g, '+').replace(/_/g, '/');
-          const pad = b64.length % 4 ? b64 + '===='.slice(b64.length % 4) : b64;
-          urlVal = 'data:image/jpeg;base64,' + pad;
-        }
-        if (lastRow2 >= 4) {
-          const ids2 = sheet2.getRange(4, idCol, lastRow2 - 3, 1).getValues();
-          for (let i = 0; i < ids2.length; i++) {
-            if (String(ids2[i][0]) === String(p.id)) {
-              sheet2.getRange(4 + i, linkCol).setValue(urlVal);
-              break;
-            }
-          }
-        }
-      }
-      return ok({ updated: true });
-    }
-
-    if (action === 'delete') {
-      const sheetName = type === 'income' ? INC_SHEET : EXP_SHEET;
-      const idCol     = type === 'income' ? 9 : 14;
-      const sheet     = ss.getSheetByName(sheetName);
-      if (!sheet) return ok({ deleted: false });
-
-      const lastRow = sheet.getLastRow();
-      if (lastRow < 4) return ok({ deleted: false });
-
-      const ids = sheet.getRange(4, idCol, lastRow - 3, 1).getValues();
-      for (let i = ids.length - 1; i >= 0; i--) {
-        if (String(ids[i][0]).trim() === String(p.id || '').trim()) {
-          sheet.deleteRow(i + 4);
-          return ok({ deleted: true });
-        }
-      }
-      return ok({ deleted: false, message: 'ID not found' });
-    }
-
-    // ── READ ────────────────────────────────────────────────────────────────
-    if (action === 'read') {
-      const sheetName = type === 'income' ? INC_SHEET : EXP_SHEET;
-      const sheet     = ss.getSheetByName(sheetName);
-      if (!sheet) return ok({ rows: [] });
-
-      const lastRow = sheet.getLastRow();
-      if (lastRow < 4) return ok({ rows: [] });
-
-      const numCols = type === 'income' ? 9 : 14;
-      const values  = sheet.getRange(4, 1, lastRow - 3, numCols).getValues();
-      const tz      = Session.getScriptTimeZone();
-
-      const rows = values
-        .filter(r => r[0] !== '' && r[0] !== null)
-        .map(r => {
-          if (type === 'expense') {
-            return {
-              id:           String(r[13] || ''),
-              type:         'expense',
-              date:         r[0] ? Utilities.formatDate(new Date(r[0]), tz, 'yyyy-MM-dd') : '',
-              vendor:       String(r[1]  || ''),
-              desc:         String(r[2]  || ''),
-              category:     String(r[3]  || ''),
-              amount:       parseFloat(r[4])  || 0,
-              currency:     String(r[5]  || 'USD'),
-              method:       String(r[6]  || ''),
-              taxDeductible: r[7] === 'Yes',
-              scheduleC:    String(r[8]  || ''),
-              miles:        parseFloat(r[9])  || 0,
-              sqft:         parseFloat(r[10]) || 0,
-              notes:        String(r[11] || ''),
-              receiptUrl:   String(r[12] || ''),
-            };
-          } else {
-            return {
-              id:         String(r[8] || ''),
-              type:       'income',
-              date:       r[0] ? Utilities.formatDate(new Date(r[0]), tz, 'yyyy-MM-dd') : '',
-              client:     String(r[1] || ''),
-              invoice:    String(r[2] || ''),
-              amount:     parseFloat(r[3]) || 0,
-              currency:   String(r[4] || 'USD'),
-              status:     String(r[5] || 'Unpaid'),
-              notes:      String(r[6] || ''),
-              invoiceUrl: String(r[7] || ''),
-            };
-          }
-        });
-
-      return ok({ rows: rows });
-    }
-
-    return err('Unknown action: ' + action);
-
-  } catch(ex) {
-    return err('Server error: ' + ex.message);
+// Find the sheet row carrying this ID. Returns 0 when not present.
+function findRowById(sheet, idCol, id) {
+  if (!id) return 0;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < DATA_START) return 0;
+  const ids  = sheet.getRange(DATA_START, idCol, lastRow - DATA_START + 1, 1).getValues();
+  const want = String(id).trim();
+  for (let i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]).trim() === want) return DATA_START + i;
   }
+  return 0;
 }
 
-// doPost handled below
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
 function nextEmptyRow(sheet, startRow) {
-  // Scan column A from startRow to find first truly empty cell
-  // This avoids appending after the TOTAL row when setup created 500 blank rows
+  // Scan column A from startRow to find first truly empty cell.
+  // Avoids appending after the TOTAL row that setup creates below 500 blank rows.
   const data = sheet.getRange(startRow, 1, Math.max(sheet.getLastRow() - startRow + 2, 1), 1).getValues();
   for (let i = 0; i < data.length; i++) {
     if (data[i][0] === '' || data[i][0] === null) return startRow + i;
@@ -288,64 +72,290 @@ function nextEmptyRow(sheet, startRow) {
   return startRow + data.length;
 }
 
-// ── doPost: receives receipt/invoice image and uploads to Google Drive ──────
-function doPost(e) {
+function num(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+
+// Write (or update) one entry. Idempotent by ID: re-sending the same entry
+// updates its existing row instead of appending a duplicate.
+// Never blanks an existing receipt/invoice link when the incoming link is empty.
+function writeEntry(ss, type, p) {
+  const isIncome = (type === 'income');
+  const sheet    = ss.getSheetByName(isIncome ? INC_SHEET : EXP_SHEET);
+  if (!sheet) throw new Error('Sheet "' + (isIncome ? INC_SHEET : EXP_SHEET) + '" not found - run setupSheets() first');
+
+  const idCol   = isIncome ? 9 : 14;
+  const linkCol = isIncome ? 8 : 13;
+  const nCols   = isIncome ? 9 : 14;
+  const amtCol  = isIncome ? 4 : 5;
+
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (e) { throw new Error('Server busy, please retry'); }
+
   try {
-    const data     = JSON.parse(e.postData.contents || e.postData.getDataAsString());
-    const id       = data.id       || '';
-    const type     = data.type     || 'expense';
-    const base64   = data.base64   || '';
-    const fileName = data.fileName || ('receipt_' + id + '.jpg');
-    if (!base64 || !id) return ok({ url: '' });
+    let row = findRowById(sheet, idCol, p.id);
+    const isUpdate = row > 0;
+    if (!isUpdate) row = nextEmptyRow(sheet, DATA_START);
 
-    const folderName = type === 'income' ? INVOICES_FOLDER : RECEIPTS_FOLDER;
-    const url = uploadFile(base64, fileName, folderName);
+    // Preserve an already-stored attachment link if this write carries none.
+    let link = normalizeLink(p.receiptUrl || p.invoiceUrl || '', p.id);
+    if (!link && isUpdate) link = sheet.getRange(row, linkCol).getValue() || '';
 
-    // Update the receipt/invoice link column in the sheet
-    const ss    = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = ss.getSheetByName(type === 'income' ? INC_SHEET : EXP_SHEET);
-    if (sheet && url) {
-      // Find the row with this ID (column 14 for expense, col 9 for income)
-      const idCol   = type === 'income' ? 9  : 14;
-      const linkCol = type === 'income' ? 8  : 13;
-      const lastRow = sheet.getLastRow();
-      if (lastRow >= 4) {
-        const ids = sheet.getRange(4, idCol, lastRow - 3, 1).getValues();
-        for (let i = 0; i < ids.length; i++) {
-          if (String(ids[i][0]) === String(id)) {
-            sheet.getRange(4 + i, linkCol).setValue(url);
-            break;
-          }
-        }
-      }
-    }
-    return ok({ url: url });
-  } catch(ex) {
-    return err(ex.message);
+    const values = isIncome
+      ? [ p.date || '', p.client || '', p.invoice || '', num(p.amount),
+          p.currency || 'USD', p.status || 'Unpaid', p.notes || '', link, p.id || '' ]
+      : [ p.date || '', p.vendor || '', p.desc || '', p.category || '', num(p.amount),
+          p.currency || 'USD', p.method || '', p.taxDeductible || 'No', p.scheduleC || '',
+          num(p.miles), num(p.sqft), p.notes || '', link, p.id || '' ];
+
+    sheet.getRange(row, 1, 1, nCols).setValues([values]);
+    sheet.getRange(row, amtCol).setNumberFormat('"$"#,##0.00');
+    return row;
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
   }
 }
 
+// Legacy inline "data:image/jpeg;base64url,..." links become real Drive files.
+function normalizeLink(u, id) {
+  u = String(u || '');
+  if (u.indexOf('base64url,') === -1) return u;
+  try {
+    const b64 = u.split('base64url,')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 ? b64 + '===='.slice(b64.length % 4) : b64;
+    return uploadFile('data:image/jpeg;base64,' + pad, 'receipt_' + id + '.jpg', RECEIPTS_FOLDER);
+  } catch (ex) { return ''; }
+}
+
+// Upload an attachment and stamp its URL into the row. `row` may be 0 (then look it up).
+function saveAttachment(ss, type, id, dataUrl, row) {
+  const isIncome = (type === 'income');
+  if (!dataUrl || !id) return '';
+  const ext  = /pdf/i.test(String(dataUrl).slice(0, 40)) ? 'pdf' : 'jpg';
+  const name = (isIncome ? 'invoice_' : 'receipt_') + id + '.' + ext;
+  const url  = uploadFile(dataUrl, name, isIncome ? INVOICES_FOLDER : RECEIPTS_FOLDER);
+  if (!url) return '';
+
+  const sheet   = ss.getSheetByName(isIncome ? INC_SHEET : EXP_SHEET);
+  const linkCol = isIncome ? 8 : 13;
+  const r = row || findRowById(sheet, isIncome ? 9 : 14, id);
+  if (sheet && r) sheet.getRange(r, linkCol).setValue(url);
+  return url;
+}
+
+function deleteById(ss, type, id) {
+  const isIncome = (type === 'income');
+  const sheet = ss.getSheetByName(isIncome ? INC_SHEET : EXP_SHEET);
+  if (!sheet) return false;
+  const row = findRowById(sheet, isIncome ? 9 : 14, id);
+  if (!row) return false;
+  sheet.deleteRow(row);
+  return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  doPost — FAST PATH: one request writes the row AND uploads the receipt
+//
+//  Body: { action:'save', type:'expense'|'income', id, date, vendor, ...,
+//          attachment:'data:image/jpeg;base64,...' }
+//  Sent as Content-Type: text/plain so the browser skips the CORS preflight.
+// ═══════════════════════════════════════════════════════════════════════════
+function doPost(e) {
+  try {
+    let body = {};
+    try {
+      const raw = (e && e.postData) ? (e.postData.contents || e.postData.getDataAsString()) : '';
+      body = JSON.parse(raw || '{}');
+    } catch (ex) {
+      return err('Bad request body');
+    }
+
+    const action = String(body.action || 'save').toLowerCase();
+    const type   = String(body.type   || 'expense').toLowerCase();
+    const ss     = SpreadsheetApp.getActiveSpreadsheet();
+
+    // One-shot save: row + attachment together
+    if (action === 'save' || action === 'add') {
+      const row = writeEntry(ss, type, body);
+      let url = '';
+      if (body.attachment) {
+        // The row is already committed - an attachment failure must not fail the save.
+        try { url = saveAttachment(ss, type, body.id, body.attachment, row); }
+        catch (ex) { url = ''; }
+      }
+      return ok({ row: row, url: url, attached: !!url });
+    }
+
+    // Attachment only (legacy clients)
+    if (action === 'attach' || action === 'upload') {
+      return ok({ url: saveAttachment(ss, type, body.id, body.base64 || body.attachment, 0) });
+    }
+
+    if (action === 'delete') {
+      return ok({ deleted: deleteById(ss, type, body.id) });
+    }
+
+    return err('Unknown action: ' + action);
+  } catch (ex) {
+    return err('Server error: ' + ex.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  doGet — fallback + reads.  All action names are compared lower-case.
+//
+//  ?action=add&type=expense&vendor=...   -> write expense row
+//  ?action=delete&type=expense&id=...    -> delete row by ID
+//  ?action=read&type=expense             -> return all expense rows
+//  ?action=attachChunk|attachDone        -> chunked attachment fallback
+// ═══════════════════════════════════════════════════════════════════════════
+function doGet(e) {
+  try {
+    const p      = (e && e.parameter) ? e.parameter : {};
+    const action = String(p.action || 'read').toLowerCase();
+    const type   = String(p.type   || 'expense').toLowerCase();
+    const ss     = SpreadsheetApp.getActiveSpreadsheet();
+
+    // -- ADD ---------------------------------------------------------------
+    if (action === 'add' || action === 'save') {
+      return ok({ row: writeEntry(ss, type, p) });
+    }
+
+    // -- CHUNKED ATTACHMENT FALLBACK ---------------------------------------
+    // Accepts both the 'attach*' names the app sends and the older 'receipt*'
+    // names. These were previously compared against mixed-case strings AFTER
+    // the action had been lower-cased, so they could never match and every
+    // chunk fell through to "Unknown action".
+    if (action === 'attachchunk' || action === 'receiptchunk') {
+      const cache = CacheService.getScriptCache();
+      cache.put('rc_' + p.id + '_' + p.chunk, String(p.data || ''), 1800);
+      if (String(p.chunk) === '0') {
+        cache.put('rm_' + p.id, JSON.stringify({
+          total: p.total,
+          mime:  p.mime || 'image/jpeg',
+          type:  (p.atype || p.type || 'expense')
+        }), 1800);
+      }
+      return ok({ chunk: p.chunk });
+    }
+
+    if (action === 'attachdone' || action === 'receiptdone') {
+      const cache = CacheService.getScriptCache();
+      const meta  = JSON.parse(cache.get('rm_' + p.id) || '{}');
+      const total = parseInt(meta.total || 0, 10);
+      const mime  = meta.mime || 'image/jpeg';
+      const atype = String(meta.type || p.atype || p.type || 'expense').toLowerCase();
+      if (!total) return err('No chunks found for ' + p.id);
+
+      let raw = '';
+      for (let i = 0; i < total; i++) raw += (cache.get('rc_' + p.id + '_' + i) || '');
+      if (!raw) return err('No chunks found for ' + p.id);
+
+      // chunks arrive URL-safe base64 - convert back before decoding
+      const std = raw.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = std.length % 4 ? std + '===='.slice(std.length % 4) : std;
+      return ok({ url: saveAttachment(ss, atype, p.id, 'data:' + mime + ';base64,' + pad, 0) });
+    }
+
+    if (action === 'updatereceipt') {
+      const isIncome = (type === 'income');
+      const sheet    = ss.getSheetByName(isIncome ? INC_SHEET : EXP_SHEET);
+      if (sheet) {
+        const row = findRowById(sheet, isIncome ? 9 : 14, p.id);
+        if (row) sheet.getRange(row, isIncome ? 8 : 13).setValue(normalizeLink(p.url || '', p.id));
+      }
+      return ok({ updated: true });
+    }
+
+    // -- DELETE ------------------------------------------------------------
+    if (action === 'delete') {
+      return ok({ deleted: deleteById(ss, type, p.id) });
+    }
+
+    // -- PING (app uses this to verify the deployment is reachable) ---------
+    if (action === 'ping') {
+      return ok({ pong: true, version: 2, time: new Date().toISOString() });
+    }
+
+    // -- READ --------------------------------------------------------------
+    if (action === 'read') {
+      const isIncome = (type === 'income');
+      const sheet    = ss.getSheetByName(isIncome ? INC_SHEET : EXP_SHEET);
+      if (!sheet) return ok({ rows: [] });
+
+      const lastRow = sheet.getLastRow();
+      if (lastRow < DATA_START) return ok({ rows: [] });
+
+      const numCols = isIncome ? 9 : 14;
+      const values  = sheet.getRange(DATA_START, 1, lastRow - DATA_START + 1, numCols).getValues();
+      const tz      = Session.getScriptTimeZone();
+
+      const rows = values
+        .filter(r => r[0] !== '' && r[0] !== null)
+        .map(r => {
+          const d = r[0] ? Utilities.formatDate(new Date(r[0]), tz, 'yyyy-MM-dd') : '';
+          if (!isIncome) {
+            return {
+              id: String(r[13] || ''), type: 'expense', date: d,
+              vendor: String(r[1] || ''), desc: String(r[2] || ''),
+              category: String(r[3] || ''), amount: num(r[4]),
+              currency: String(r[5] || 'USD'), method: String(r[6] || ''),
+              taxDeductible: r[7] === 'Yes', scheduleC: String(r[8] || ''),
+              miles: num(r[9]), sqft: num(r[10]),
+              notes: String(r[11] || ''), receiptUrl: String(r[12] || '')
+            };
+          }
+          return {
+            id: String(r[8] || ''), type: 'income', date: d,
+            client: String(r[1] || ''), invoice: String(r[2] || ''),
+            amount: num(r[3]), currency: String(r[4] || 'USD'),
+            status: String(r[5] || 'Unpaid'), notes: String(r[6] || ''),
+            invoiceUrl: String(r[7] || '')
+          };
+        });
+
+      return ok({ rows: rows });
+    }
+
+    return err('Unknown action: ' + action);
+  } catch (ex) {
+    return err('Server error: ' + ex.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DRIVE HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Folder IDs are cached in Script Properties - DriveApp.getFoldersByName() is a
+// full Drive query and was costing roughly a second on every single upload.
 function getOrCreateFolder(name) {
-  const iter = DriveApp.getFoldersByName(name);
-  return iter.hasNext() ? iter.next() : DriveApp.createFolder(name);
+  const props  = PropertiesService.getScriptProperties();
+  const key    = 'folderId_' + name;
+  const cached = props.getProperty(key);
+  if (cached) {
+    try {
+      const f = DriveApp.getFolderById(cached);
+      if (!f.isTrashed()) return f;
+    } catch (e) { /* stale id - fall through and re-resolve */ }
+  }
+  const iter   = DriveApp.getFoldersByName(name);
+  const folder = iter.hasNext() ? iter.next() : DriveApp.createFolder(name);
+  props.setProperty(key, folder.getId());
+  return folder;
 }
 
 function uploadFile(base64Data, fileName, folderName) {
   try {
-    const match = base64Data.match(/^data:([^;]+);base64,(.+)$/);
+    const match = String(base64Data).match(/^data:([^;]+);base64,([\s\S]+)$/);
     if (!match) return '';
-    const blob   = Utilities.newBlob(Utilities.base64Decode(match[2]), match[1], fileName);
-    const folder = getOrCreateFolder(folderName);
-    const file   = folder.createFile(blob);
-    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    const blob = Utilities.newBlob(Utilities.base64Decode(match[2]), match[1], fileName);
+    const file = getOrCreateFolder(folderName).createFile(blob);
+    // Sharing can fail on domain-restricted accounts - the file is still saved,
+    // so never let that throw away the URL.
+    try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
     return file.getUrl();
-  } catch(ex) { return ''; }
+  } catch (ex) { return ''; }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  TEST FUNCTION — run this from the editor to verify everything works
-//  Check the Execution Log for results.
-// ═══════════════════════════════════════════════════════════════════════════
 function testConnection() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -391,17 +401,82 @@ function testConnection() {
 // ═══════════════════════════════════════════════════════════════════════════
 function setupSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Safety net: snapshot the whole spreadsheet before touching formatting.
+  let backupNote = '';
+  try {
+    const copy = DriveApp.getFileById(ss.getId()).makeCopy(
+      'Ledger Pro BACKUP ' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm')
+    );
+    backupNote = '\n\nA full backup was saved to your Drive:\n' + copy.getName();
+  } catch (e) {
+    backupNote = '\n\n(Backup copy could not be created: ' + e.message + ')';
+  }
+
+  const expBefore = countDataRows(ss.getSheetByName(EXP_SHEET));
+  const incBefore = countDataRows(ss.getSheetByName(INC_SHEET));
+
   setupExpenseLog(ss);
   setupIncomeLog(ss);
   setupDashboard(ss);
   setupTaxSummary(ss);
+
+  const expAfter = countDataRows(ss.getSheetByName(EXP_SHEET));
+  const incAfter = countDataRows(ss.getSheetByName(INC_SHEET));
+
   SpreadsheetApp.getUi().alert(
-    '✅ Ledger Pro sheets ready!\n\n• Expense Log\n• Income Log\n• Dashboard\n• Tax Summary\n\nNow go to Deploy → New Deployment → Web App.'
+    'Ledger Pro sheets ready.\n\n' +
+    'Expense Log: ' + expBefore + ' rows before, ' + expAfter + ' after\n' +
+    'Income Log:  ' + incBefore + ' rows before, ' + incAfter + ' after\n\n' +
+    'Your data is preserved - only headers, formatting and formulas were rebuilt.' +
+    backupNote +
+    '\n\nNext: Deploy > New Deployment > Web App.'
   );
+}
+
+// ── Data-preserving helpers for setup ───────────────────────────────────────
+// setupExpenseLog/setupIncomeLog rebuild formatting with sheet.clear(), which
+// wipes values too. These pull the data out first and put it straight back.
+
+// A real data row has something in column A that is not the TOTAL banner
+// that setup writes below the data range.
+function isDataRow(r) {
+  const a = r[0];
+  if (a === '' || a === null || a === undefined) return false;
+  return !/^\s*TOTAL\b/i.test(String(a));
+}
+
+function countDataRows(sheet) {
+  if (!sheet) return 0;
+  const lastRow = sheet.getLastRow();
+  if (lastRow < DATA_START) return 0;
+  return sheet.getRange(DATA_START, 1, lastRow - DATA_START + 1, 1)
+              .getValues().filter(isDataRow).length;
+}
+
+function captureDataRows(sheet, nCols) {
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow < DATA_START) return [];
+  return sheet.getRange(DATA_START, 1, lastRow - DATA_START + 1, nCols)
+              .getValues()
+              .filter(isDataRow);
+}
+
+function restoreDataRows(sheet, rows, nCols, amtCol) {
+  if (!sheet || !rows || !rows.length) return;
+  sheet.getRange(DATA_START, 1, rows.length, nCols).setValues(rows);
+  sheet.getRange(DATA_START, amtCol, rows.length, 1).setNumberFormat('"$"#,##0.00');
 }
 
 function setupExpenseLog(ss) {
   let sheet = ss.getSheetByName(EXP_SHEET) || ss.insertSheet(EXP_SHEET);
+
+  // NON-DESTRUCTIVE: capture every existing data row before reformatting.
+  // This function used to call sheet.clear() outright, which permanently
+  // destroyed all logged expenses for anyone who re-ran setupSheets().
+  const saved = captureDataRows(sheet, 14);
+
   sheet.clear(); sheet.clearFormats();
 
   sheet.getRange(1,1,1,14).merge()
@@ -427,13 +502,15 @@ function setupExpenseLog(ss) {
 
   [100,170,200,160,85,70,120,125,155,65,80,170,170,130].forEach((w,i)=>sheet.setColumnWidth(i+1,w));
 
-  const N = 500;
+  const N = Math.max(500, saved.length + 100);
   applyVal(sheet,4,4,N,'Advertising,Car & Truck,Commissions & Fees,Contract Labor,Depreciation,Employee Benefits,Home Office,Insurance,Interest,Legal & Professional,Meals (50%),Office Supplies,Rent & Lease,Repairs & Maintenance,Software & Subscriptions,Taxes & Licenses,Travel,Utilities,Wages,Other');
   applyVal(sheet,4,6,N,'USD,EUR,GBP,CAD,AUD,IRR,MXN,BRL,JPY,CHF');
   applyVal(sheet,4,7,N,'Credit Card,Debit Card,Cash,Bank Transfer,PayPal,Check,Other');
   applyVal(sheet,4,8,N,'Yes,No');
 
   try { sheet.getRange(4,1,N,14).applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY,false,false); } catch(e){}
+
+  restoreDataRows(sheet, saved, 14, 5);
 
   const totalRow = 4+N;
   sheet.getRange(totalRow,1,1,5).merge().setValue('TOTAL EXPENSES (CA Schedule C)')
@@ -445,6 +522,10 @@ function setupExpenseLog(ss) {
 
 function setupIncomeLog(ss) {
   let sheet = ss.getSheetByName(INC_SHEET) || ss.insertSheet(INC_SHEET);
+
+  // NON-DESTRUCTIVE: see the note in setupExpenseLog().
+  const saved = captureDataRows(sheet, 9);
+
   sheet.clear(); sheet.clearFormats();
 
   sheet.getRange(1,1,1,9).merge()
@@ -468,11 +549,13 @@ function setupIncomeLog(ss) {
 
   [100,200,130,85,70,95,200,180,130].forEach((w,i)=>sheet.setColumnWidth(i+1,w));
 
-  const N = 500;
+  const N = Math.max(500, saved.length + 100);
   applyVal(sheet,4,5,N,'USD,EUR,GBP,CAD,AUD,IRR,MXN,BRL,JPY,CHF');
   applyVal(sheet,4,6,N,'Paid,Unpaid,Overdue,Partial');
 
   try { sheet.getRange(4,1,N,9).applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY,false,false); } catch(e){}
+
+  restoreDataRows(sheet, saved, 9, 4);
 
   const totalRow = 4+N;
   sheet.getRange(totalRow,1,1,3).merge().setValue('TOTAL INCOME')

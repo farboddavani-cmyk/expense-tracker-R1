@@ -195,17 +195,18 @@ img{max-width:100%;display:block}
 .icon-btn:active{background:var(--card-hi)}
 
 /* ═══════════════════════════════════════════════
-   TRIAL BANNER
+   SYNC / PENDING INDICATOR
 ═══════════════════════════════════════════════ */
-#trial-banner{
-  background:linear-gradient(90deg,var(--gold-dim),#8B5E1A);
-  padding:10px 16px;display:flex;align-items:center;justify-content:space-between;
-  flex-shrink:0;gap:12px;
+#pending-count{
+  display:none;align-items:center;justify-content:center;
+  min-width:18px;height:18px;padding:0 5px;margin-left:6px;
+  background:var(--gold);color:#0F1923;border-radius:9px;
+  font-family:var(--font-display);font-size:11px;font-weight:700;
 }
-#trial-banner.hidden{display:none}
-.trial-text{font-family:var(--font-display);font-size:13px;font-weight:600;color:#fff}
-.trial-text span{color:var(--gold-glow)}
-.trial-upgrade-btn{background:rgba(0,0,0,0.25);color:#fff;border-radius:6px;padding:6px 12px;font-family:var(--font-display);font-size:12px;font-weight:600;border:1px solid rgba(255,255,255,0.2);flex-shrink:0}
+.entry-sync{font-size:11px;margin-left:6px;opacity:0.85}
+.entry-sync.syncing{color:var(--gold)}
+.entry-sync.pending{color:#C0504A}
+.entry-sync.synced{color:var(--sage-glow)}
 
 /* ═══════════════════════════════════════════════
    DASHBOARD
@@ -360,25 +361,6 @@ img{max-width:100%;display:block}
 .onboard-dot.active{width:22px;background:var(--gold)}
 .onboard-actions{display:flex;flex-direction:column;gap:10px;padding:10px 24px 32px;flex-shrink:0}
 
-/* ═══════════════════════════════════════════════
-   PAYWALL
-═══════════════════════════════════════════════ */
-#paywall{background:var(--slate);z-index:999}
-.paywall-header{
-  padding:32px 24px 24px;text-align:center;
-  background:linear-gradient(180deg,rgba(212,168,67,0.08) 0%,transparent 100%);
-}
-.paywall-badge{
-  display:inline-flex;align-items:center;gap:6px;padding:6px 16px;
-  background:rgba(212,168,67,0.15);border:1px solid var(--border-hi);border-radius:20px;
-  font-family:var(--font-display);font-size:12px;font-weight:600;color:var(--gold);
-  letter-spacing:0.05em;text-transform:uppercase;margin-bottom:16px;
-}
-.price-tag{
-  display:flex;align-items:baseline;justify-content:center;gap:4px;margin:16px 0;
-}
-.price-main{font-family:var(--font-display);font-size:52px;font-weight:700;color:var(--gold);letter-spacing:-0.04em}
-.price-sub{font-family:var(--font-display);font-size:16px;color:var(--muted)}
 .feature-list{display:flex;flex-direction:column;gap:10px;padding:0 24px 24px}
 .feature-row{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius-sm)}
 .feature-check{color:var(--sage-glow);font-size:16px;flex-shrink:0}
@@ -711,62 +693,9 @@ img{max-width:100%;display:block}
 </div>
 
 <!-- ══════════════════════════════════
-     PAYWALL
-══════════════════════════════════ -->
-<div id="paywall" class="screen">
-  <div class="scroll-area" style="padding-bottom:24px">
-    <div class="paywall-header">
-      <div class="receipt-icon receipt-icon-lg" style="margin:0 auto 24px">
-        <svg viewBox="0 0 80 96" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M10 0h60a4 4 0 014 4v76l-10-7-10 7-10-7-10 7-10-7-10 7V4a4 4 0 014-4z" fill="#F7F8FA"/>
-          <line x1="22" y1="24" x2="58" y2="24" stroke="#D4A843" stroke-width="2" stroke-linecap="round"/>
-          <line x1="22" y1="36" x2="58" y2="36" stroke="#D4A843" stroke-width="2" stroke-linecap="round"/>
-          <line x1="22" y1="48" x2="46" y2="48" stroke="#D4A843" stroke-width="2" stroke-linecap="round"/>
-          <line x1="22" y1="60" x2="40" y2="60" stroke="#D4A843" stroke-width="1.5" stroke-linecap="round"/>
-          <path d="M0 90 Q10 82 20 90 Q30 98 40 90 Q50 82 60 90 Q70 98 80 90" stroke="#D4A843" stroke-width="2" fill="none" stroke-linecap="round"/>
-        </svg>
-      </div>
-      <div class="paywall-badge">⭐ Ledger Pro</div>
-      <div class="t-hero text-center">Unlock Full Access</div>
-      <div class="t-body text-center mt-8">One-time purchase. No subscription. No surprises.</div>
-      <div class="price-tag">
-        <span class="price-main">$9.99</span>
-        <span class="price-sub">one-time</span>
-      </div>
-    </div>
-    <div class="feature-list">
-      <div class="feature-row"><span class="feature-check">✅</span><span class="feature-text" id="f1">Unlimited expense &amp; income tracking</span></div>
-      <div class="feature-row"><span class="feature-check">✅</span><span class="feature-text" id="f2">Receipt &amp; invoice photo upload</span></div>
-      <div class="feature-row"><span class="feature-check">✅</span><span class="feature-text" id="f3">Google Sheets sync</span></div>
-      <div class="feature-row"><span class="feature-check">✅</span><span class="feature-text" id="f4">CSV, JSON &amp; TSV export</span></div>
-      <div class="feature-row"><span class="feature-check">✅</span><span class="feature-text" id="f5">Multi-currency support</span></div>
-      <div class="feature-row"><span class="feature-check">✅</span><span class="feature-text" id="f6">Tax deductible tracking</span></div>
-      <div class="feature-row"><span class="feature-check">✅</span><span class="feature-text" id="f7">6 languages including Farsi</span></div>
-      <div class="feature-row"><span class="feature-check">✅</span><span class="feature-text" id="f8">Offline support</span></div>
-    </div>
-    <div style="padding:0 24px;display:flex;flex-direction:column;gap:10px">
-      <button class="btn btn-primary btn-full" id="purchase-btn" style="font-size:16px;padding:16px">
-        <span>Buy Now — $9.99</span>
-      </button>
-      <button class="btn btn-ghost btn-full" id="restore-btn-paywall">Restore Purchase</button>
-      <button class="btn btn-ghost btn-full" id="trial-btn" style="font-size:13px;color:var(--muted)">Start Free Trial</button>
-    </div>
-    <div class="t-body text-center mt-16" style="padding:0 24px;font-size:12px">
-      By purchasing you agree to our <a href="#" style="color:var(--gold)">Terms of Service</a> and <a href="#" style="color:var(--gold)">Privacy Policy</a>
-    </div>
-  </div>
-</div>
-
-<!-- ══════════════════════════════════
      MAIN APP SHELL
 ══════════════════════════════════ -->
 <div id="main-app" class="screen">
-  <!-- Trial Banner -->
-  <div id="trial-banner" class="hidden">
-    <div class="trial-text">🕐 Trial: <span id="trial-days-left">10</span> days left</div>
-    <button class="trial-upgrade-btn" id="trial-upgrade-btn">Upgrade $9.99</button>
-  </div>
-
   <!-- Screen Stack for main views -->
   <div id="main-screen-stack" style="position:relative;flex:1;overflow:hidden;display:flex;flex-direction:column">
 
@@ -786,7 +715,7 @@ img{max-width:100%;display:block}
           <span class="top-bar-title">Ledger Pro</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
-          <span id="sync-status" style="font-size:12px;color:var(--muted);display:flex;align-items:center"><span class="sync-dot online" id="sync-dot"></span><span id="sync-text">Synced</span></span>
+          <span id="sync-status" style="font-size:12px;color:var(--muted);display:flex;align-items:center"><span class="sync-dot online" id="sync-dot"></span><span id="sync-text">Synced</span><span id="pending-count" title="Entries waiting to sync"></span></span>
           <button class="icon-btn" id="refresh-btn" title="Refresh from Google Sheets" style="font-size:13px;font-family:var(--font-display);font-weight:600;color:var(--gold);width:auto;padding:0 10px">↻ Sync</button>
           <button class="icon-btn" id="settings-btn" title="Settings">⚙️</button>
         </div>
@@ -1211,23 +1140,14 @@ img{max-width:100%;display:block}
         <div style="width:36px"></div>
       </div>
       <div class="scroll-area">
-        <div class="settings-section-title" id="set-section-license">License</div>
+        <div class="settings-section-title" id="set-section-sync">Sync</div>
         <div class="settings-list">
-          <div class="settings-item" id="settings-upgrade-btn">
+          <div class="settings-item" id="settings-retry-btn">
             <div class="settings-item-left">
-              <span class="settings-item-icon">⭐</span>
+              <span class="settings-item-icon">🔄</span>
               <div>
-                <div class="settings-item-label" id="set-upgrade-lbl">Upgrade to Pro</div>
-                <div class="settings-item-sub" id="set-license-status">Free Trial</div>
-              </div>
-            </div>
-            <span class="settings-item-right color-gold">$9.99</span>
-          </div>
-          <div class="settings-item" id="settings-restore-btn">
-            <div class="settings-item-left">
-              <span class="settings-item-icon">🔑</span>
-              <div>
-                <div class="settings-item-label" id="set-restore-lbl">Restore Purchase</div>
+                <div class="settings-item-label" id="set-retry-lbl">Retry Pending Uploads</div>
+                <div class="settings-item-sub" id="set-pending-status">Everything is synced</div>
               </div>
             </div>
             <span class="settings-item-right">→</span>
@@ -1423,11 +1343,11 @@ const LANGS = {
     'kpi-paid-lbl':'Invoices Paid','kpi-unpaid-lbl':'Unpaid',
     'dash-cat-title':'Expenses by Category','dash-status-title':'Invoice Status','dash-recent-title':'Recent Entries',
     'dash-see-all':'See all',
-    'set-upgrade-lbl':'Upgrade to Pro','set-restore-lbl':'Restore Purchase',
+    'set-retry-lbl':'Retry Pending Uploads',
     'set-currency-lbl':'Default Currency','set-lang-lbl':'Language','set-sheets-lbl':'Apps Script URL',
     'set-sheets-sub':'Tap to change','set-export-lbl':'Export All Data',
     'set-clear-lbl':'Clear All Data','set-clear-sub':'Cannot be undone',
-    'set-section-license':'License','set-section-prefs':'Preferences','set-section-sheets':'Google Sheets','set-section-data':'Data',
+    'set-section-sync':'Sync','set-section-prefs':'Preferences','set-section-sheets':'Google Sheets','set-section-data':'Data',
     'exp-section-download':'Download','exp-section-sync':'Google Sheets','exp-section-restore':'Restore',
     'exp-csv-exp-lbl':'Export Expenses CSV','exp-csv-exp-sub':'Spreadsheet-ready format',
     'exp-csv-inc-lbl':'Export Income CSV','exp-csv-inc-sub':'Spreadsheet-ready format',
@@ -1642,8 +1562,6 @@ const STATE = {
     currency: 'USD',
     sheetsUrl: 'https://script.google.com/macros/s/AKfycbyvcPmMXV1nWu7PlMG-xTUKr1_QCwtS0XjHNqd_3v6zdrwTkneOPl60-IHX_N6SXfQ/exec',
     onboardingDone: false,
-    licensed: false,
-    trialStart: null,
   },
   ui: {
     currentView: 'dashboard',
@@ -1656,7 +1574,6 @@ const STATE = {
   }
 };
 
-const TRIAL_DAYS = 10;
 const CURRENCIES = ['USD','EUR','GBP','CAD','AUD','IRR','MXN','BRL','JPY','CHF','SGD','HKD','INR','KRW'];
 const CAT_COLORS = ['#D4A843','#C0504A','#2D7A5F','#4A7AB5','#8B6CB5','#C07A3A','#5A8A8A','#A05A8A','#6A8A5A','#8A6A4A','#4A6A8A','#7A4A8A'];
 
@@ -1685,62 +1602,10 @@ function load() {
   } catch(e) { console.warn('Load failed:', e); }
 }
 
-// ═══════════════════════════════════════════════
-//  TRIAL / LICENSE
-// ═══════════════════════════════════════════════
-function initTrial() {
-  if (!STATE.settings.trialStart) {
-    STATE.settings.trialStart = Date.now();
-    save();
-  }
-}
-
-function trialDaysLeft() {
-  if (!STATE.settings.trialStart) return TRIAL_DAYS;
-  const elapsed = Math.floor((Date.now() - STATE.settings.trialStart) / 86400000);
-  return Math.max(0, TRIAL_DAYS - elapsed);
-}
-
-function isLicensed() { return STATE.settings.licensed; }
-function isTrialActive() { return trialDaysLeft() > 0; }
-function hasAccess() { return isLicensed() || isTrialActive(); }
-
-function updateTrialBanner() {
-  const banner = document.getElementById('trial-banner');
-  if (isLicensed()) { banner.classList.add('hidden'); return; }
-  const days = trialDaysLeft();
-  if (days <= 0) { banner.classList.add('hidden'); return; }
-  banner.classList.remove('hidden');
-  document.getElementById('trial-days-left').textContent = days;
-}
-
-// Play Billing bridge (Android WebView)
-function purchaseProduct() {
-  if (window.Android && window.Android.purchaseProduct) {
-    window.Android.purchaseProduct('ledger_unlock_full');
-  } else {
-    // Web fallback: show paywall
-    showScreen('paywall');
-  }
-}
-
-function restorePurchase() {
-  if (window.Android && window.Android.restorePurchase) {
-    window.Android.restorePurchase();
-  } else {
-    toast('Restore not available in browser', 'info');
-  }
-}
-
-// Called by Android bridge on successful purchase
-window.onPurchaseSuccess = function() {
-  STATE.settings.licensed = true;
-  save();
-  updateTrialBanner();
-  document.getElementById('set-license-status').textContent = '✅ Pro';
-  toast('✅ Ledger Pro unlocked!', 'success');
-  showScreen('main-app');
-};
+// Trial, paywall and Play Billing were removed — every feature is always on.
+// Any old Android bridge callback is accepted and ignored so a wrapped build
+// that still calls it cannot throw.
+window.onPurchaseSuccess = function() {};
 
 // ═══════════════════════════════════════════════
 //  i18n
@@ -1874,34 +1739,9 @@ document.getElementById('onboard-next').addEventListener('click', () => {
 
 document.getElementById('skip-onboard').addEventListener('click', finishOnboarding);
 
-function finishOnboarding() {
-  STATE.settings.onboardingDone = true;
-  save();
-  initTrial();
-  if (!hasAccess()) {
-    showScreen('paywall');
-  } else {
-    showScreen('main-app');
-    // Ensure dashboard is the active inner view
-    document.querySelectorAll('#main-screen-stack > .screen').forEach(s => {
-      s.style.transform = 'translateX(100%)';
-      s.classList.remove('active');
-    });
-    const dash = document.getElementById('view-dashboard');
-    if (dash) { dash.style.transform = 'translateX(0)'; dash.classList.add('active'); }
-    renderDashboard();
-    updateTrialBanner();
-  }
-}
-
-// ═══════════════════════════════════════════════
-//  PAYWALL
-// ═══════════════════════════════════════════════
-document.getElementById('purchase-btn').addEventListener('click', purchaseProduct);
-document.getElementById('restore-btn-paywall').addEventListener('click', restorePurchase);
-document.getElementById('trial-btn').addEventListener('click', () => {
-  initTrial();
+function openMainApp() {
   showScreen('main-app');
+  // Ensure dashboard is the active inner view
   document.querySelectorAll('#main-screen-stack > .screen').forEach(s => {
     s.style.transform = 'translateX(100%)';
     s.classList.remove('active');
@@ -1909,9 +1749,14 @@ document.getElementById('trial-btn').addEventListener('click', () => {
   const dash = document.getElementById('view-dashboard');
   if (dash) { dash.style.transform = 'translateX(0)'; dash.classList.add('active'); }
   renderDashboard();
-  updateTrialBanner();
-});
-document.getElementById('trial-upgrade-btn').addEventListener('click', () => showScreen('paywall'));
+  updatePendingBadge();
+}
+
+function finishOnboarding() {
+  STATE.settings.onboardingDone = true;
+  save();
+  openMainApp();
+}
 
 // ═══════════════════════════════════════════════
 //  LOG FORM
@@ -2064,7 +1909,15 @@ function updateCAQuarterlyBanner() {
 // Save entry
 document.getElementById('log-save-btn').addEventListener('click', saveEntry);
 
+let savingEntry = false;
 async function saveEntry() {
+  // A double tap used to create two rows with two different IDs.
+  if (savingEntry) return;
+  savingEntry = true;
+  const btn = document.getElementById('log-save-btn');
+  if (btn) btn.disabled = true;
+  setTimeout(() => { savingEntry = false; if (btn) btn.disabled = false; }, 1200);
+
   const mode = STATE.ui.logMode;
   let entry;
 
@@ -2107,12 +1960,17 @@ async function saveEntry() {
     STATE.income.unshift(entry);
   }
 
+  entry.syncState = STATE.settings.sheetsUrl ? 'syncing' : 'local';
   save();
-  toast('Entry saved ✨', 'success');
 
-  // Upload to Sheets in background
   if (STATE.settings.sheetsUrl) {
+    // Queue BEFORE sending: if the app is closed mid-upload the entry is still
+    // in the queue and goes out on the next launch instead of being lost.
+    queuePending(entry);
+    toast('Saved — syncing to Sheets…', 'success');
     uploadToSheets(entry);
+  } else {
+    toast('Saved on this device ✨', 'success');
   }
 
   resetLogForm();
@@ -2176,108 +2034,229 @@ async function callSheets(params) {
   return pingSheets(url);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  UPLOAD  —  one POST carries the row AND the receipt.
+//
+//  This used to fire one <script> request per 6 KB of image, strictly
+//  sequentially: a normal photo became 35-55 chained round trips, which is
+//  where the 20-30 second save came from. Worse, the server compared the
+//  action name against mixed-case strings after lower-casing it, so every
+//  one of those chunk requests was rejected and no receipt ever landed.
+//
+//  Now: compress -> single POST -> done, typically 2-4 seconds.
+//  Content-Type text/plain keeps it a CORS "simple request", so the browser
+//  skips the preflight that Apps Script cannot answer.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function postToSheets(payload, timeoutMs) {
+  const base = STATE.settings.sheetsUrl;
+  if (!base) throw new Error('No Apps Script URL configured');
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs || 20000);
+  try {
+    const resp = await fetch(base, {
+      method:   'POST',
+      mode:     'cors',
+      redirect: 'follow',
+      headers:  { 'Content-Type': 'text/plain;charset=utf-8' },
+      body:     JSON.stringify(payload),
+      signal:   ctrl.signal
+    });
+    const data = await resp.json();
+    if (data.status !== 'ok') throw new Error(data.message || 'Sheets rejected the write');
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function entryPayload(entry) {
+  if (entry.type === 'expense') {
+    return {
+      action: 'save', type: 'expense', id: entry.id, date: entry.date,
+      vendor: entry.vendor, desc: entry.desc || '', category: entry.category,
+      amount: entry.amount, currency: entry.currency, method: entry.method,
+      taxDeductible: entry.taxDeductible ? 'Yes' : 'No',
+      scheduleC: entry.scheduleC || '', miles: entry.miles || 0, sqft: entry.sqft || 0,
+      notes: entry.notes || '', receiptUrl: entry.receiptUrl || ''
+    };
+  }
+  return {
+    action: 'save', type: 'income', id: entry.id, date: entry.date,
+    client: entry.client, invoice: entry.invoice, amount: entry.amount,
+    currency: entry.currency, status: entry.status, notes: entry.notes || '',
+    invoiceUrl: entry.invoiceUrl || ''
+  };
+}
+
+// PDFs go as-is; photos are compressed to something readable but small enough
+// to move in one request.
+async function attachmentFor(entry) {
+  const src = entry.type === 'income' ? entry.invoiceBase64 : entry.receiptBase64;
+  if (!src) return null;
+  if (/^data:application\/pdf/i.test(src)) return src;
+  return await compressImage(src, 1200, 0.62);
+}
+
 async function uploadToSheets(entry) {
-  // Attachments are streamed separately in chunks (see uploadAttachmentChunked) so they can be full, readable resolution.
-  const base = STATE.settings.sheetsUrl;
-  if (!base) return;
+  if (!STATE.settings.sheetsUrl) return;
   setSyncStatus('syncing');
+  markEntrySync(entry.id, 'syncing');
+
+  let payload;
   try {
-    let params;
-    if (entry.type === 'expense') {
-      params = {
-        action:        'add',
-        type:          'expense',
-        id:            entry.id,
-        date:          entry.date,
-        vendor:        entry.vendor,
-        desc:          entry.desc          || '',
-        category:      entry.category,
-        amount:        entry.amount,
-        currency:      entry.currency,
-        method:        entry.method,
-        taxDeductible: entry.taxDeductible ? 'Yes' : 'No',
-        scheduleC:     entry.scheduleC     || '',
-        miles:         entry.miles         || 0,
-        sqft:          entry.sqft          || 0,
-        notes:         entry.notes         || '',
-        receiptUrl:    '',   // filled in later by uploadAttachmentChunked
-      };
-    } else {
-      params = {
-        action:   'add',
-        type:     'income',
-        id:       entry.id,
-        date:     entry.date,
-        client:   entry.client,
-        invoice:  entry.invoice,
-        amount:   entry.amount,
-        currency: entry.currency,
-        status:   entry.status,
-        notes:    entry.notes || '',
-        invoiceUrl: '',   // filled in later by uploadAttachmentChunked
-      };
+    payload = entryPayload(entry);
+    const attachment = await attachmentFor(entry);
+    if (attachment) payload.attachment = attachment;
+  } catch (e) {
+    payload = entryPayload(entry);   // never lose the row over a bad image
+  }
+
+  // Fast path, with one retry — most first-call failures are just a cold
+  // Apps Script container.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const data = await postToSheets(payload);
+      // An older Code.gs answers POST with {status:'ok', url:''} and writes no
+      // row at all. Only the new backend reports the row it wrote, so treat a
+      // missing row as a failure and fall through to the GET path.
+      if (!data.row) throw new Error('Backend did not confirm a row — Code.gs needs updating');
+      markEntrySync(entry.id, 'synced');
+      clearPending(entry.id);
+      setSyncStatus('online');
+      toast(data.attached ? 'Saved to Sheets with receipt ✓' : 'Saved to Sheets ✓', 'success');
+      return;
+    } catch (e) {
+      if (attempt === 1) console.warn('POST path failed, trying GET fallback:', e);
     }
-    await callSheets(params);              // create the row first (small + reliable)
-    await uploadAttachmentChunked(entry);  // then stream the full-res attachment in, if any
+  }
 
-    toast('Saved to Google Sheets ✓', 'success');
-
+  // Fallback for older deployments / blocked POST.
+  try {
+    await uploadViaGetFallback(entry);
+    markEntrySync(entry.id, 'synced');
+    clearPending(entry.id);
     setSyncStatus('online');
-  } catch(e) {
+    toast('Saved to Sheets ✓', 'success');
+  } catch (e) {
+    markEntrySync(entry.id, 'pending');
+    queuePending(entry);
     setSyncStatus('offline');
-    console.warn('Sheets upload failed:', e);
-    toast('Saved locally — Sheets error: ' + e.message, 'info');
+    toast('Saved on this device — it will sync automatically', 'info');
   }
 }
 
-// Send a readable-quality receipt/invoice to Drive by splitting it into URL-safe base64
-// chunks. Avoids the single-request URL-length limit that used to force 80px thumbnails.
-async function uploadAttachmentChunked(entry) {
-  const base = STATE.settings.sheetsUrl;
-  const src  = entry.type === 'income' ? entry.invoiceBase64 : entry.receiptBase64;
-  if (!base || !src) return;
-  try {
-    let dataUrl, mime;
-    if (/^data:application\/pdf/i.test(src)) {
-      dataUrl = src; mime = 'application/pdf';                         // PDFs sent as-is
-    } else {
-      dataUrl = await compressImage(src, 1000, 0.6); mime = 'image/jpeg'; // readable, not a thumbnail
+// Legacy route: URL-param row write, then chunked attachment. Chunks now go out
+// in parallel batches instead of one-at-a-time.
+async function uploadViaGetFallback(entry) {
+  const base   = STATE.settings.sheetsUrl;
+  const params = entryPayload(entry);
+  params.action = 'add';
+  delete params.attachment;
+  await pingSheets(buildUrl(base, params));
+
+  const attachment = await attachmentFor(entry);
+  if (!attachment) return;
+
+  const mime  = /^data:application\/pdf/i.test(attachment) ? 'application/pdf' : 'image/jpeg';
+  const b64   = attachment.split(',')[1] || '';
+  const safe  = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  const CHUNK = 6000;
+  const total = Math.ceil(safe.length / CHUNK);
+  const POOL  = 6;
+
+  for (let i = 0; i < total; i += POOL) {
+    const batch = [];
+    for (let k = 0; k < POOL && i + k < total; k++) {
+      const n = i + k;
+      batch.push(pingSheets(buildUrl(base, {
+        action: 'attachChunk', id: entry.id, chunk: n, total: total,
+        mime: mime, atype: entry.type, data: safe.slice(n * CHUNK, (n + 1) * CHUNK)
+      })));
     }
-    const b64   = dataUrl.split(',')[1] || '';
-    const safe  = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-    const CHUNK = 6000;
-    const total = Math.ceil(safe.length / CHUNK);
-    for (let i = 0; i < total; i++) {
-      await pingSheets(buildUrl(base, {
-        action: 'attachChunk', id: entry.id, chunk: i, total: total,
-        mime: mime, atype: entry.type, data: safe.slice(i * CHUNK, (i + 1) * CHUNK)
-      }));
-    }
-    await pingSheets(buildUrl(base, { action: 'attachDone', id: entry.id, atype: entry.type }));
-  } catch(e) { console.warn('attachment upload failed', e); }
+    await Promise.all(batch);
+  }
+  await pingSheets(buildUrl(base, { action: 'attachDone', id: entry.id, atype: entry.type }));
 }
 
-// Upload receipt as tiny thumbnail via GET ping — fits in URL, follows Google redirects
-async function uploadReceiptGet(base, id, type, base64) {
-  try {
-    // Compress to tiny thumbnail
-    const thumb = await compressImage(base64, 80, 0.3);
-    const raw = thumb.split(',')[1] || thumb;
-    // Convert to URL-safe base64 (replace +→-, /→_, remove =)
-    // Apps Script e.parameter auto-decodes %2B back to + but then treats + as space
-    // URL-safe alphabet avoids this entirely
-    const safe = raw.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-    await pingSheets(buildUrl(base, {
-      action: 'updateReceipt',
-      type: type,
-      id: id,
-      url: 'data:image/jpeg;base64url,' + safe
-    }));
-    toast('Receipt saved ✓', 'success');
-  } catch(e) {
-    console.warn('Receipt GET failed:', e);
+// ═══════════════════════════════════════════════════════════════════════════
+//  OFFLINE QUEUE — anything that failed to reach Sheets is retried later,
+//  so a dropped connection can no longer silently lose an expense.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function readPending() {
+  try { return JSON.parse(localStorage.getItem('lp_pending') || '[]'); }
+  catch (e) { return []; }
+}
+
+function writePending(q) {
+  try { localStorage.setItem('lp_pending', JSON.stringify(q)); } catch (e) {}
+  updatePendingBadge();
+}
+
+function queuePending(entry) {
+  const q = readPending().filter(x => x.id !== entry.id);
+  q.push(entry);
+  writePending(q);
+}
+
+function clearPending(id) {
+  const q = readPending();
+  const next = q.filter(x => x.id !== id);
+  if (next.length !== q.length) writePending(next);
+}
+
+function markEntrySync(id, state) {
+  const list = STATE.expenses.concat(STATE.income);
+  const hit  = list.find(x => x.id === id);
+  if (hit) { hit.syncState = state; save(); }
+  updatePendingBadge();
+}
+
+function updatePendingBadge() {
+  const n  = readPending().length;
+  const el = document.getElementById('pending-count');
+  if (el) {
+    el.textContent  = n ? String(n) : '';
+    el.style.display = n ? 'inline-flex' : 'none';
+  }
+  const sub = document.getElementById('set-pending-status');
+  if (sub) {
+    sub.textContent = n
+      ? n + ' ' + (n === 1 ? 'entry' : 'entries') + ' waiting to sync'
+      : 'Everything is synced';
   }
 }
+
+let flushing = false;
+async function flushPending() {
+  if (flushing || !navigator.onLine || !STATE.settings.sheetsUrl) return;
+  const q = readPending();
+  if (!q.length) return;
+  flushing = true;
+  try {
+    for (const entry of q) {
+      try {
+        const payload = entryPayload(entry);
+        const attachment = await attachmentFor(entry);
+        if (attachment) payload.attachment = attachment;
+        const data = await postToSheets(payload);
+        if (!data.row) throw new Error('Backend did not confirm a row');
+        markEntrySync(entry.id, 'synced');
+        clearPending(entry.id);
+      } catch (e) { /* stays queued for the next attempt */ }
+    }
+    if (!readPending().length) {
+      setSyncStatus('online');
+      toast('All pending entries synced ✓', 'success');
+    }
+  } finally {
+    flushing = false;
+  }
+}
+
+window.addEventListener('online',  () => { setSyncStatus('online'); flushPending(); });
+window.addEventListener('offline', () => setSyncStatus('offline'));
 
 async function deleteFromSheets(entry) {
   const base = STATE.settings.sheetsUrl;
@@ -2332,8 +2311,9 @@ async function syncFromSheets() {
 function setSyncStatus(status) {
   const dot = document.getElementById('sync-dot');
   const txt = document.getElementById('sync-text');
-  dot.className = `sync-dot ${status}`;
-  if (status === 'online') txt.textContent = 'Synced';
+  if (dot) dot.className = `sync-dot ${status}`;
+  if (!txt) return;
+  if (status === 'online') txt.textContent = readPending().length ? 'Pending' : 'Synced';
   else if (status === 'syncing') txt.textContent = 'Syncing…';
   else txt.textContent = 'Offline';
 }
@@ -2684,8 +2664,12 @@ document.getElementById('back-from-settings').addEventListener('click', () => sh
 document.getElementById('dash-see-all').addEventListener('click', () => showView('entries'));
 
 // Settings items
-document.getElementById('settings-upgrade-btn').addEventListener('click', purchaseProduct);
-document.getElementById('settings-restore-btn').addEventListener('click', restorePurchase);
+document.getElementById('settings-retry-btn').addEventListener('click', () => {
+  const n = readPending().length;
+  if (!n) { toast('Nothing pending — everything is synced ✓', 'success'); return; }
+  toast('Retrying ' + n + ' pending ' + (n === 1 ? 'entry' : 'entries') + '…', 'info');
+  flushPending();
+});
 document.getElementById('settings-export-all').addEventListener('click', exportJSON);
 
 document.getElementById('setting-currency').addEventListener('click', () => {
@@ -2809,7 +2793,6 @@ function init() {
     document.getElementById('set-sheets-sub').textContent = 'URL configured ✅';
   }
   document.getElementById('set-currency-val').textContent = STATE.settings.currency;
-  document.getElementById('set-license-status').textContent = STATE.settings.licensed ? '✅ Pro' : 'Free Trial';
 
   // Set default dates & currencies
   document.getElementById('exp-date').value = today();
@@ -2821,22 +2804,14 @@ function init() {
   // Show correct starting screen
   if (!STATE.settings.onboardingDone) {
     showScreen('onboarding');
-  } else if (!hasAccess()) {
-    showScreen('paywall');
   } else {
-    showScreen('main-app');
-    // Show dashboard view inside main-app
-    document.querySelectorAll('#main-screen-stack > .screen').forEach(s => {
-      s.style.transform = 'translateX(100%)';
-      s.classList.remove('active');
-    });
-    const dash = document.getElementById('view-dashboard');
-    if (dash) { dash.style.transform = 'translateX(0)'; dash.classList.add('active'); }
-    renderDashboard();
-    updateTrialBanner();
+    openMainApp();
   }
 
   setSyncStatus(navigator.onLine ? 'online' : 'offline');
+  updatePendingBadge();
+  // Anything that failed to reach Sheets on a previous run gets another go.
+  if (navigator.onLine) flushPending();
 }
 
 document.addEventListener('DOMContentLoaded', init);
