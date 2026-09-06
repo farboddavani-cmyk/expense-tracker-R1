@@ -807,6 +807,43 @@ function applyVal(sheet, startRow, col, numRows, csv) {
 
 const DRY_RUN = true;
 
+// Specific rows moved out of the catch-all "Other" bucket. Unlike
+// CATEGORY_ALIASES these are judgement calls about individual expenses, not
+// renames, so each one is listed explicitly and reported in the dry run.
+// Rows carrying an ID are matched on it; the older row without one is matched
+// on date + vendor + amount so it cannot hit anything else by accident.
+const RECATEGORIZE = [
+  { id: 'ms226do3w3gvq', to: 'Dues & Memberships',
+    why: 'PMI — PMP certification renewal' },
+  { id: 'msci79fgisbep', to: 'Equipment & Tools',
+    why: 'Samsung — cell phone for employee' },
+  { id: 'mscjs7rtddbbn', to: 'Equipment & Tools',
+    why: 'Samsung — AI watch Ultra' },
+  { date: '2026-06-09', vendor: 'Chase bank', amount: 34.00,
+    to: 'Bank & Merchant Fees', why: 'Chase — checkbook order fee' }
+];
+
+// Returns the RECATEGORIZE entry matching this row, or null.
+function matchRecategorize(r, tz) {
+  const id = String(r[13] || '').trim();
+  for (let i = 0; i < RECATEGORIZE.length; i++) {
+    const m = RECATEGORIZE[i];
+    if (m.id) {
+      if (id && id === m.id) return m;
+      continue;
+    }
+    const d = (r[0] instanceof Date)
+      ? Utilities.formatDate(r[0], tz, 'yyyy-MM-dd')
+      : String(r[0]).trim();
+    if (d === m.date &&
+        Math.abs(num(r[4]) - m.amount) < 0.005 &&
+        String(r[1] || '').trim().toLowerCase() === String(m.vendor).trim().toLowerCase()) {
+      return m;
+    }
+  }
+  return null;
+}
+
 function migrateSheetData() {
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(EXP_SHEET);
@@ -837,13 +874,14 @@ function migrateSheetData() {
 
   const totalBefore = vals.reduce((s, r) => s + (isDataRow(r) ? num(r[4]) : 0), 0);
 
-  // ── 1 & 2 · categories and Schedule C lines ───────────────────────────────
-  let catFixes = 0, lineFixes = 0;
+  // ── 1 · legacy renames  2 · approved moves  3 · Schedule C lines ──────────
+  let catFixes = 0, moveFixes = 0, lineFixes = 0;
   for (let i = 0; i < vals.length; i++) {
     const r = vals[i];
     if (!isDataRow(r)) continue;
     const rowNo = DATA_START + i;
 
+    // 1 · pure rename of legacy vocabulary
     const before = String(r[3] || '').trim();
     const after  = canonicalCategory(before);
     if (after && after !== before) {
@@ -851,10 +889,26 @@ function migrateSheetData() {
       r[3] = after;
       catFixes++;
     }
-    if (after && !CAT_LINE.hasOwnProperty(after)) {
-      out.push('Row ' + rowNo + '  NOTE: category "' + after + '" is not in CATEGORIES — left as is');
+    if (r[3] && !CAT_LINE.hasOwnProperty(r[3])) {
+      out.push('Row ' + rowNo + '  NOTE: category "' + r[3] + '" is not in CATEGORIES — left as is');
     }
 
+    // 2 · specific approved reassignments. These also reset the Schedule C
+    // line, because the line on the row belonged to the old category.
+    const move = matchRecategorize(r, tz);
+    if (move && r[3] !== move.to) {
+      out.push('Row ' + rowNo + '  RECATEGORISE: "' + r[3] + '"  ->  "' + move.to + '"   (' + move.why + ')');
+      r[3] = move.to;
+      moveFixes++;
+      const newLine = CAT_LINE[move.to] || '';
+      if (newLine && String(r[8] || '').trim() !== newLine) {
+        out.push('Row ' + rowNo + '  Schedule C line: "' + (String(r[8] || '') || '(blank)') + '"  ->  "' + newLine + '"');
+        r[8] = newLine;
+        lineFixes++;
+      }
+    }
+
+    // 3 · fill a still-blank Schedule C line from the category
     if (!String(r[8] || '').trim() && CAT_LINE[r[3]]) {
       out.push('Row ' + rowNo + '  Schedule C line: (blank)  ->  "' + CAT_LINE[r[3]] + '"');
       r[8] = CAT_LINE[r[3]];
@@ -895,9 +949,17 @@ function migrateSheetData() {
 
   const removedTotal = dropIdx.reduce((s, i) => s + num(vals[i][4]), 0);
 
+  // Flag any approved move that matched nothing — a wrong ID would otherwise
+  // fail silently and leave the row in the wrong category.
+  RECATEGORIZE.forEach(m => {
+    const hit = vals.some(r => isDataRow(r) && matchRecategorize(r, tz) === m);
+    if (!hit) out.push('WARNING: no row matched the move "' + m.why + '" — check the id/date');
+  });
+
   out.push('');
   out.push('Category renames .......... ' + catFixes);
-  out.push('Schedule C lines filled ... ' + lineFixes);
+  out.push('Rows recategorised ........ ' + moveFixes);
+  out.push('Schedule C lines set ...... ' + lineFixes);
   out.push('Duplicate rows to remove .. ' + dropIdx.length);
   out.push('Expense total before ...... $' + totalBefore.toFixed(2));
   out.push('Expense total after ....... $' + (totalBefore - removedTotal).toFixed(2));
@@ -915,7 +977,8 @@ function migrateSheetData() {
   dropIdx.sort((x, y) => y - x).forEach(i => sheet.deleteRow(DATA_START + i));
 
   out.push('');
-  out.push('Done. ' + dropIdx.length + ' row(s) removed, ' + (catFixes + lineFixes) + ' cell(s) corrected.');
+  out.push('Done. ' + dropIdx.length + ' row(s) removed, ' +
+           (catFixes + moveFixes + lineFixes) + ' cell(s) corrected.');
   Logger.log(out.join('\n'));
   SpreadsheetApp.getUi().alert(out.join('\n'));
 }
