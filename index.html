@@ -2174,15 +2174,25 @@ function entryPayload(entry) {
   };
 }
 
-// PDFs go as-is; photos are compressed to something readable but small enough
-// to move quickly. 1000px @ 0.55 keeps a receipt legible for an audit while
-// roughly halving the bytes against 1200 @ 0.62 — on the chunked route that is
-// the difference between ~40 requests and ~22.
+// PDFs go as-is; photos are compressed before upload.
+//
+// 900px @ 0.5 is picked from measurement, not taste. On the chunked route the
+// cost is the NUMBER of requests, and those go out in one parallel batch, so
+// what matters is landing under the batch size. Measured on a simulated phone
+// photo of a receipt (textured desk, uneven light, 325KB source):
+//     1000px q0.55 -> 83KB, 13 chunks -> 2 batches
+//      900px q0.50 -> 69KB, 11 chunks -> 1 batch
+//      800px q0.50 -> 57KB,  9 chunks -> 1 batch
+// 900px keeps the most resolution while still fitting a single batch.
+//
+// Greyscaling was tried and made files LARGER (87KB vs 83KB): JPEG already
+// subsamples chroma, so there was nothing to win, and clamping the white point
+// added hard edges that cost bits.
 async function attachmentFor(entry) {
   const src = entry.type === 'income' ? entry.invoiceBase64 : entry.receiptBase64;
   if (!src) return null;
   if (/^data:application\/pdf/i.test(src)) return src;
-  return await compressImage(src, 1000, 0.55);
+  return await compressImage(src, 900, 0.5);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2276,11 +2286,18 @@ async function uploadViaGetFallback(entry) {
   // returns 200, 12000 returns 400 (URL too long). 9000 leaves headroom for the
   // base URL and the other params while cutting the request count by a third
   // versus the 6000 this used to send.
-  // Parallelism past ~12 stops paying for itself — 24 at once measured 5.8s
-  // against 3.3s for 12, so throughput barely moves while latency doubles.
+  //
+  // Pool of 16, measured from the browser (not curl — the browser caps
+  // concurrent connections per host, so these differ):
+  //     1 chunk alone .... 1249ms
+  //     6 in parallel .... 2192ms   (365ms each)
+  //    12 in parallel .... 3813ms   (318ms each)
+  // Per-chunk cost keeps falling with width, so the goal is to fit every chunk
+  // of a typical receipt into ONE batch. 16 covers the 11 a 900px receipt needs
+  // plus room for a noisier photo.
   const CHUNK = 9000;
   const total = Math.ceil(safe.length / CHUNK);
-  const POOL  = 12;
+  const POOL  = 16;
 
   const sendChunks = (async () => {
     for (let i = 0; i < total; i += POOL) {
