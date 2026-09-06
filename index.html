@@ -822,26 +822,55 @@ img{max-width:100%;display:block}
             <div class="field">
               <label class="field-label" id="lbl-cat">Category</label>
               <select class="field-input field-select" id="exp-cat">
-                <option value="Advertising">Advertising &amp; Marketing</option>
-                <option value="Car &amp; Truck">Car &amp; Truck (Mileage/Vehicle)</option>
-                <option value="Commissions &amp; Fees">Commissions &amp; Fees</option>
-                <option value="Contract Labor">Contract Labor (1099)</option>
-                <option value="Depreciation">Depreciation &amp; Section 179</option>
-                <option value="Employee Benefits">Employee Benefits</option>
-                <option value="Home Office">Home Office (Schedule C Ln 30)</option>
-                <option value="Insurance">Insurance (Business)</option>
-                <option value="Interest">Interest (Business Loans)</option>
-                <option value="Legal &amp; Professional">Legal &amp; Professional Services</option>
-                <option value="Meals (50%)">Meals &amp; Entertainment (50% deductible)</option>
-                <option value="Office Supplies">Office Supplies &amp; Postage</option>
-                <option value="Rent &amp; Lease">Rent &amp; Lease (Business Property)</option>
-                <option value="Repairs &amp; Maintenance">Repairs &amp; Maintenance</option>
-                <option value="Software &amp; Subscriptions">Software &amp; Subscriptions</option>
-                <option value="Taxes &amp; Licenses">Taxes &amp; Licenses (CA LLC Fee, etc.)</option>
-                <option value="Travel">Travel (Away from Home)</option>
-                <option value="Utilities">Utilities</option>
-                <option value="Wages">Wages &amp; Salaries</option>
-                <option value="Other">Other Business Expense</option>
+                <optgroup label="Materials &amp; Equipment">
+                  <option value="Materials &amp; Supplies">Materials &amp; Supplies</option>
+                  <option value="Equipment &amp; Tools">Equipment &amp; Tools</option>
+                  <option value="Software &amp; Subscriptions">Software &amp; Subscriptions</option>
+                  <option value="Office Supplies">Office Supplies &amp; Postage</option>
+                  <option value="Safety &amp; PPE">Safety &amp; PPE</option>
+                  <option value="Uniforms &amp; Work Clothing">Uniforms &amp; Work Clothing</option>
+                </optgroup>
+                <optgroup label="Labor">
+                  <option value="Subcontractors">Subcontractors</option>
+                  <option value="Contract Labor">Contract Labor (1099)</option>
+                  <option value="Wages">Wages &amp; Salaries</option>
+                  <option value="Employee Benefits">Employee Benefits</option>
+                  <option value="Commissions &amp; Fees">Commissions &amp; Fees</option>
+                </optgroup>
+                <optgroup label="Vehicle &amp; Travel">
+                  <option value="Car &amp; Truck">Car &amp; Truck (Mileage)</option>
+                  <option value="Vehicle Fuel &amp; Maintenance">Vehicle Fuel &amp; Maintenance</option>
+                  <option value="Parking &amp; Tolls">Parking &amp; Tolls</option>
+                  <option value="Travel">Travel (Away from Home)</option>
+                  <option value="Meals (50%)">Meals (50% deductible)</option>
+                </optgroup>
+                <optgroup label="Job Site &amp; Facilities">
+                  <option value="Rent &amp; Lease">Rent &amp; Lease (Business Property)</option>
+                  <option value="Storage &amp; Warehouse">Storage &amp; Warehouse</option>
+                  <option value="Repairs &amp; Maintenance">Repairs &amp; Maintenance</option>
+                  <option value="Cleaning &amp; Janitorial">Cleaning &amp; Janitorial</option>
+                  <option value="Waste &amp; Disposal">Waste &amp; Disposal (Dumpster / Haul-off)</option>
+                  <option value="Utilities">Utilities</option>
+                  <option value="Phone &amp; Internet">Phone &amp; Internet</option>
+                  <option value="Home Office">Home Office (Schedule C Ln 30)</option>
+                </optgroup>
+                <optgroup label="Professional &amp; Financial">
+                  <option value="Legal &amp; Professional">Legal &amp; Professional Services</option>
+                  <option value="Insurance">Insurance (Business)</option>
+                  <option value="Taxes &amp; Licenses">Taxes &amp; Licenses (CA LLC Fee, etc.)</option>
+                  <option value="Permits &amp; Inspections">Permits &amp; Inspections</option>
+                  <option value="Bank &amp; Merchant Fees">Bank &amp; Merchant Fees</option>
+                  <option value="Interest">Interest (Business Loans)</option>
+                  <option value="Depreciation">Depreciation &amp; Section 179</option>
+                </optgroup>
+                <optgroup label="Growth &amp; Other">
+                  <option value="Advertising">Advertising &amp; Marketing</option>
+                  <option value="Training &amp; Education">Training &amp; Education</option>
+                  <option value="Dues &amp; Memberships">Dues &amp; Memberships</option>
+                  <option value="Gifts">Gifts (max $25 per person)</option>
+                  <option value="Shipping &amp; Freight">Shipping &amp; Freight</option>
+                  <option value="Other">Other Business Expense</option>
+                </optgroup>
               </select>
             </div>
             <div class="field">
@@ -1769,7 +1798,9 @@ function resetLogForm() {
   document.getElementById('exp-currency').value = STATE.settings.currency;
   document.getElementById('exp-tax').checked = false;
   document.getElementById('exp-notes').value = '';
-  document.getElementById('exp-schedule-c').value = '';
+  const schedEl = document.getElementById('exp-schedule-c');
+  schedEl.value = '';
+  schedEl.dataset.auto = '';
   document.getElementById('exp-miles').value = '';
   document.getElementById('exp-sqft').value = '';
   document.getElementById('mileage-field').style.display = 'none';
@@ -1855,13 +1886,67 @@ function clearInvoiceUpload() {
   document.getElementById('invoice-upload-zone').style.display = '';
 }
 
-// Mileage auto-fill
+// Category -> Schedule C line. Mirrors CATEGORIES in Code.gs; keep both in step.
+const CAT_TO_LINE = {
+  'Advertising':'Ln8 Advertising',
+  'Bank & Merchant Fees':'Ln27a Other',
+  'Car & Truck':'Ln9 Car & Truck',
+  'Cleaning & Janitorial':'Ln21 Repairs',
+  'Commissions & Fees':'Ln10 Commissions',
+  'Contract Labor':'Ln11 Contract Labor',
+  'Depreciation':'Ln13 Depreciation',
+  'Dues & Memberships':'Ln27a Other',
+  'Employee Benefits':'Ln14 Employee Benefits',
+  'Equipment & Tools':'Ln13 Depreciation',
+  'Gifts':'Ln27a Other',
+  'Home Office':'Ln30 Home Office',
+  'Insurance':'Ln15 Insurance',
+  'Interest':'Ln16 Interest',
+  'Legal & Professional':'Ln17 Legal & Professional',
+  'Materials & Supplies':'Ln22 Supplies',
+  'Meals (50%)':'Ln24b Meals 50%',
+  'Office Supplies':'Ln18 Office',
+  'Parking & Tolls':'Ln9 Car & Truck',
+  'Permits & Inspections':'Ln23 Taxes & Licenses',
+  'Phone & Internet':'Ln25 Utilities',
+  'Rent & Lease':'Ln20b Rent Other',
+  'Repairs & Maintenance':'Ln21 Repairs',
+  'Safety & PPE':'Ln22 Supplies',
+  'Shipping & Freight':'Ln27a Other',
+  'Software & Subscriptions':'Ln27a Other',
+  'Storage & Warehouse':'Ln20b Rent Other',
+  'Subcontractors':'Ln11 Contract Labor',
+  'Taxes & Licenses':'Ln23 Taxes & Licenses',
+  'Training & Education':'Ln27a Other',
+  'Travel':'Ln24a Travel',
+  'Uniforms & Work Clothing':'Ln27a Other',
+  'Utilities':'Ln25 Utilities',
+  'Vehicle Fuel & Maintenance':'Ln9 Car & Truck',
+  'Wages':'Ln26 Wages',
+  'Waste & Disposal':'Ln27a Other',
+  'Other':'Ln27a Other'
+};
+
+// Mileage / home-office fields, plus Schedule C auto-fill
 document.getElementById('exp-cat').addEventListener('change', function() {
   const cat = this.value;
   const mileageField = document.getElementById('mileage-field');
   const homeOfficeField = document.getElementById('home-office-field');
   mileageField.style.display = (cat === 'Car & Truck') ? 'block' : 'none';
   homeOfficeField.style.display = (cat === 'Home Office') ? 'block' : 'none';
+
+  // Fill the Schedule C line to match, unless the user picked one themselves.
+  const sched = document.getElementById('exp-schedule-c');
+  const line  = CAT_TO_LINE[cat];
+  if (sched && line && (!sched.value || sched.dataset.auto === '1')) {
+    sched.value = line;
+    sched.dataset.auto = '1';
+  }
+});
+
+// Once the user chooses a line by hand, stop overwriting it.
+document.getElementById('exp-schedule-c').addEventListener('change', function() {
+  this.dataset.auto = '';
 });
 document.getElementById('exp-miles').addEventListener('input', function() {
   const miles = parseFloat(this.value) || 0;

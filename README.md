@@ -31,29 +31,75 @@ Ledger Pro is built around the specific requirements of the **California Franchi
 
 ### 📋 Expense Categories (Schedule C Aligned)
 
-All categories map directly to IRS Schedule C / CA FTB equivalent lines:
+37 categories, grouped in the picker, each mapped to an IRS Schedule C / CA FTB
+line. Choosing a category auto-fills the Schedule C line; picking a line by hand
+overrides it and it stays put.
+
+**Materials & Equipment**
+
+| App Category | Schedule C Line | CA FTB Notes |
+|---|---|---|
+| Materials & Supplies | Line 22 | Job materials, consumables |
+| Equipment & Tools | Line 13 | ⚠ CA does NOT conform to federal bonus depreciation (OBBBA 2025) |
+| Software & Subscriptions | Line 27a | SaaS, apps, tools |
+| Office Supplies & Postage | Line 18 | Fully deductible |
+| Safety & PPE | Line 22 | Hard hats, gloves, harnesses |
+| Uniforms & Work Clothing | Line 27a | Only if not suitable for everyday wear |
+
+**Labor**
+
+| App Category | Schedule C Line | CA FTB Notes |
+|---|---|---|
+| Subcontractors | Line 11 | Issue 1099-NEC by Jan 31 for $600+ paid |
+| Contract Labor (1099) | Line 11 | Issue 1099-NEC by Jan 31 for $600+ paid |
+| Wages & Salaries | Line 26 | W-2 employees only |
+| Employee Benefits | Line 14 | Health insurance, retirement plans |
+| Commissions & Fees | Line 10 | 1099-NEC required if $600+ to individual |
+
+**Vehicle & Travel**
+
+| App Category | Schedule C Line | CA FTB Notes |
+|---|---|---|
+| Car & Truck (Mileage) | Line 9 | $0.70/mi (2025) · $0.725/mi (2026) · mileage log required |
+| Vehicle Fuel & Maintenance | Line 9 | Actual-expense method — do not mix with mileage |
+| Parking & Tolls | Line 9 | Deductible on top of the mileage rate |
+| Travel (Away from Home) | Line 24a | Must be away from tax home overnight |
+| Meals (50%) | Line 24b | Only 50% deductible — CA follows federal limit |
+
+**Job Site & Facilities**
+
+| App Category | Schedule C Line | CA FTB Notes |
+|---|---|---|
+| Rent & Lease | Line 20a/20b | Equipment or business property |
+| Storage & Warehouse | Line 20b | Yard, container, unit rental |
+| Repairs & Maintenance | Line 21 | Must be repair not improvement |
+| Cleaning & Janitorial | Line 21 | Site clean-up, post-construction |
+| Waste & Disposal | Line 27a | Dumpster, haul-off, dump fees |
+| Utilities | Line 25 | Business-use percentage only |
+| Phone & Internet | Line 25 | Business-use percentage only |
+| Home Office | Line 30 | Simplified: $5/sq ft, max 300 sq ft ($1,500) |
+
+**Professional & Financial**
+
+| App Category | Schedule C Line | CA FTB Notes |
+|---|---|---|
+| Legal & Professional Services | Line 17 | CPA, attorney, consulting fees |
+| Insurance (Business) | Line 15 | Fully deductible business insurance only |
+| Taxes & Licenses | Line 23 | CA LLC Annual Fee ($800+), business licenses |
+| Permits & Inspections | Line 23 | Building permits, plan check, inspection fees |
+| Bank & Merchant Fees | Line 27a | Account fees, card processing |
+| Interest (Business Loans) | Line 16 | CA does not cap at 30% ATI like federal |
+| Depreciation & Section 179 | Line 13 | ⚠ CA does NOT conform to federal bonus depreciation |
+
+**Growth & Other**
 
 | App Category | Schedule C Line | CA FTB Notes |
 |---|---|---|
 | Advertising & Marketing | Line 8 | Fully deductible |
-| Car & Truck (Mileage) | Line 9 | $0.70/mi (2025) · $0.725/mi (2026) · mileage log required |
-| Commissions & Fees | Line 10 | 1099-NEC required if $600+ to individual |
-| Contract Labor (1099) | Line 11 | Issue 1099-NEC by Jan 31 for $600+ paid |
-| Depreciation & Section 179 | Line 13 | ⚠ CA does NOT conform to federal bonus depreciation (OBBBA 2025) |
-| Employee Benefits | Line 14 | Health insurance, retirement plans |
-| Home Office | Line 30 | Simplified: $5/sq ft, max 300 sq ft ($1,500) |
-| Insurance (Business) | Line 15 | Fully deductible business insurance only |
-| Interest (Business Loans) | Line 16 | CA does not cap at 30% ATI like federal |
-| Legal & Professional Services | Line 17 | CPA, attorney, consulting fees |
-| Meals & Entertainment (50%) | Line 24b | Only 50% deductible — CA follows federal limit |
-| Office Supplies & Postage | Line 18 | Fully deductible |
-| Rent & Lease | Line 20a/20b | Equipment or business property |
-| Repairs & Maintenance | Line 21 | Must be repair not improvement |
-| Software & Subscriptions | Line 27a | SaaS, apps, tools |
-| Taxes & Licenses | Line 23 | CA LLC Annual Fee ($800+), business licenses |
-| Travel (Away from Home) | Line 24a | Must be away from tax home overnight |
-| Utilities | Line 25 | Business-use percentage only |
-| Wages & Salaries | Line 26 | W-2 employees only |
+| Training & Education | Line 27a | Must maintain/improve skills in your current trade |
+| Dues & Memberships | Line 27a | Trade associations, certification renewals |
+| Gifts | Line 27a | Capped at $25 per recipient per year |
+| Shipping & Freight | Line 27a | Delivery, freight-in |
 | Other Business Expense | Line 27a | Catch-all for ordinary & necessary |
 
 ### 📅 California Quarterly Estimated Tax Schedule
@@ -160,6 +206,31 @@ git push -u origin main
    - Execute as: **Me**
    - Who has access: **Anyone**
 6. Copy the deployment URL → Ledger Pro app → Settings → Apps Script URL
+
+### Repairing older data — `migrateSheetData()`
+
+Rows logged before the Schedule C category vocabulary settled can carry old
+names (`Meals & Entertainment`, `Equipment`) and blank Schedule C lines, and the
+same expense may have been entered twice. `migrateSheetData()` fixes all three.
+
+1. In the Apps Script editor, leave `const DRY_RUN = true`
+2. Run `migrateSheetData()` and open **Execution log** — it prints every change
+   it *would* make and the before/after expense total. Nothing is written.
+3. If the report looks right, set `DRY_RUN = false` and run it again
+
+It saves a backup copy of the spreadsheet to Drive first and aborts if that
+backup fails. It never alters an amount, date, vendor, receipt link or ID.
+Duplicates are matched on date + amount + payment method, and the row kept is
+the more complete one (the one with an ID, a Drive receipt link and a Schedule C
+line).
+
+### Adding a category
+
+`CATEGORIES` at the top of `Code.gs` is the single source of truth — the sheet's
+dropdown validation, the Dashboard breakdown and the Tax Summary are all
+generated from it. Add `['Your Category', 'Ln27a Other']` there, re-run
+`setupSheets()`, then add a matching `<option>` and `CAT_TO_LINE` entry in
+`index.html`.
 
 ### Updating existing deployment (keep your data)
 

@@ -20,7 +20,75 @@ const INC_SHEET       = 'Income Log';
 const RECEIPTS_FOLDER = 'Ledger Pro Receipts';
 const INVOICES_FOLDER = 'Ledger Pro Invoices';
 const TAX_YEAR        = new Date().getFullYear();
-const DATA_START      = 4;   // first data row (rows 1-3 are title/note/header)
+const DATA_START      = 4;    // first data row (rows 1-3 are title/note/header)
+const LAST_ROW        = 1003; // last row the dashboard/tax formulas scan
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CATEGORIES — the single source of truth.
+//  The sheet's data validation, the Dashboard breakdown and the Tax Summary
+//  are all generated from this list, so adding a category here is enough.
+//  Keep names stable: they are the literal values stored in column D.
+// ═══════════════════════════════════════════════════════════════════════════
+const CATEGORIES = [
+  // [ category name, Schedule C line ]
+  ['Advertising',              'Ln8 Advertising'],
+  ['Bank & Merchant Fees',     'Ln27a Other'],
+  ['Car & Truck',              'Ln9 Car & Truck'],
+  ['Cleaning & Janitorial',    'Ln21 Repairs'],
+  ['Commissions & Fees',       'Ln10 Commissions'],
+  ['Contract Labor',           'Ln11 Contract Labor'],
+  ['Depreciation',             'Ln13 Depreciation'],
+  ['Dues & Memberships',       'Ln27a Other'],
+  ['Employee Benefits',        'Ln14 Employee Benefits'],
+  ['Equipment & Tools',        'Ln13 Depreciation'],
+  ['Gifts',                    'Ln27a Other'],
+  ['Home Office',              'Ln30 Home Office'],
+  ['Insurance',                'Ln15 Insurance'],
+  ['Interest',                 'Ln16 Interest'],
+  ['Legal & Professional',     'Ln17 Legal & Professional'],
+  ['Materials & Supplies',     'Ln22 Supplies'],
+  ['Meals (50%)',              'Ln24b Meals 50%'],
+  ['Office Supplies',          'Ln18 Office'],
+  ['Parking & Tolls',          'Ln9 Car & Truck'],
+  ['Permits & Inspections',    'Ln23 Taxes & Licenses'],
+  ['Phone & Internet',         'Ln25 Utilities'],
+  ['Rent & Lease',             'Ln20b Rent Other'],
+  ['Repairs & Maintenance',    'Ln21 Repairs'],
+  ['Safety & PPE',             'Ln22 Supplies'],
+  ['Shipping & Freight',       'Ln27a Other'],
+  ['Software & Subscriptions', 'Ln27a Other'],
+  ['Storage & Warehouse',      'Ln20b Rent Other'],
+  ['Subcontractors',           'Ln11 Contract Labor'],
+  ['Taxes & Licenses',         'Ln23 Taxes & Licenses'],
+  ['Training & Education',     'Ln27a Other'],
+  ['Travel',                   'Ln24a Travel'],
+  ['Uniforms & Work Clothing', 'Ln27a Other'],
+  ['Utilities',                'Ln25 Utilities'],
+  ['Vehicle Fuel & Maintenance','Ln9 Car & Truck'],
+  ['Wages',                    'Ln26 Wages'],
+  ['Waste & Disposal',         'Ln27a Other'],
+  ['Other',                    'Ln27a Other']
+];
+
+const CAT_NAMES = CATEGORIES.map(c => c[0]);
+const CAT_LINE  = CATEGORIES.reduce((m, c) => { m[c[0]] = c[1]; return m; }, {});
+
+// Older rows were logged before the Schedule C vocabulary settled. These are
+// pure renames — same expense, same amount, current name.
+const CATEGORY_ALIASES = {
+  'Meals & Entertainment':   'Meals (50%)',
+  'Meals and Entertainment': 'Meals (50%)',
+  'Meals':                   'Meals (50%)',
+  'Equipment':               'Equipment & Tools',
+  'Tools':                   'Equipment & Tools',
+  'Materials':               'Materials & Supplies',
+  'Supplies':                'Materials & Supplies',
+  'Software':                'Software & Subscriptions',
+  'Subscriptions':           'Software & Subscriptions',
+  'Legal & Professional Services': 'Legal & Professional',
+  'Advertising & Marketing': 'Advertising',
+  'Wages & Salaries':        'Wages'
+};
 
 // Expense sheet: 14 columns
 // Col: 1=Date 2=Vendor 3=Desc 4=Category 5=Amount 6=Currency
@@ -74,6 +142,25 @@ function nextEmptyRow(sheet, startRow) {
 
 function num(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 
+// Map a stored or legacy category name onto the current vocabulary.
+// An unrecognised name is returned untouched rather than guessed at.
+function canonicalCategory(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  if (CAT_LINE.hasOwnProperty(raw)) return raw;
+  if (CATEGORY_ALIASES.hasOwnProperty(raw)) return CATEGORY_ALIASES[raw];
+
+  const lower = raw.toLowerCase();
+  for (let i = 0; i < CAT_NAMES.length; i++) {
+    if (CAT_NAMES[i].toLowerCase() === lower) return CAT_NAMES[i];
+  }
+  const keys = Object.keys(CATEGORY_ALIASES);
+  for (let i = 0; i < keys.length; i++) {
+    if (keys[i].toLowerCase() === lower) return CATEGORY_ALIASES[keys[i]];
+  }
+  return raw;
+}
+
 // Write (or update) one entry. Idempotent by ID: re-sending the same entry
 // updates its existing row instead of appending a duplicate.
 // Never blanks an existing receipt/invoice link when the incoming link is empty.
@@ -99,11 +186,16 @@ function writeEntry(ss, type, p) {
     let link = normalizeLink(p.receiptUrl || p.invoiceUrl || '', p.id);
     if (!link && isUpdate) link = sheet.getRange(row, linkCol).getValue() || '';
 
+    // Normalize the category to the current vocabulary, and fill in the
+    // Schedule C line from it when the client did not send one.
+    const category  = canonicalCategory(p.category);
+    const scheduleC = p.scheduleC || CAT_LINE[category] || '';
+
     const values = isIncome
       ? [ p.date || '', p.client || '', p.invoice || '', num(p.amount),
           p.currency || 'USD', p.status || 'Unpaid', p.notes || '', link, p.id || '' ]
-      : [ p.date || '', p.vendor || '', p.desc || '', p.category || '', num(p.amount),
-          p.currency || 'USD', p.method || '', p.taxDeductible || 'No', p.scheduleC || '',
+      : [ p.date || '', p.vendor || '', p.desc || '', category, num(p.amount),
+          p.currency || 'USD', p.method || '', p.taxDeductible || 'No', scheduleC,
           num(p.miles), num(p.sqft), p.notes || '', link, p.id || '' ];
 
     sheet.getRange(row, 1, 1, nCols).setValues([values]);
@@ -503,7 +595,7 @@ function setupExpenseLog(ss) {
   [100,170,200,160,85,70,120,125,155,65,80,170,170,130].forEach((w,i)=>sheet.setColumnWidth(i+1,w));
 
   const N = Math.max(500, saved.length + 100);
-  applyVal(sheet,4,4,N,'Advertising,Car & Truck,Commissions & Fees,Contract Labor,Depreciation,Employee Benefits,Home Office,Insurance,Interest,Legal & Professional,Meals (50%),Office Supplies,Rent & Lease,Repairs & Maintenance,Software & Subscriptions,Taxes & Licenses,Travel,Utilities,Wages,Other');
+  applyVal(sheet,4,4,N,CAT_NAMES.join(','));
   applyVal(sheet,4,6,N,'USD,EUR,GBP,CAD,AUD,IRR,MXN,BRL,JPY,CHF');
   applyVal(sheet,4,7,N,'Credit Card,Debit Card,Cash,Bank Transfer,PayPal,Check,Other');
   applyVal(sheet,4,8,N,'Yes,No');
@@ -580,12 +672,12 @@ function setupDashboard(ss) {
     .setBackground('#1A2634').setFontColor('#8FA3B8')
     .setFontWeight('bold').setFontSize(9).setHorizontalAlignment('center');
 
-  sheet.getRange(4,1).setFormula("=SUM('Income Log'!D4:D503)").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#3DA87E').setBackground('#1A2634').setHorizontalAlignment('center');
-  sheet.getRange(4,2).setFormula("=SUM('Income Log'!D4:D503)-SUM('Expense Log'!E4:E503)").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#D4A843').setBackground('#1A2634').setHorizontalAlignment('center');
-  sheet.getRange(4,3).setFormula("=SUM('Expense Log'!E4:E503)").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#E06860').setBackground('#1A2634').setHorizontalAlignment('center');
-  sheet.getRange(4,4).setFormula("=COUNTIF('Income Log'!F4:F503,\"Paid\")").setFontWeight('bold').setFontSize(13).setFontColor('#3DA87E').setBackground('#1A2634').setHorizontalAlignment('center');
-  sheet.getRange(4,5).setFormula("=SUMIF('Income Log'!F4:F503,\"Unpaid\",'Income Log'!D4:D503)").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#E06860').setBackground('#1A2634').setHorizontalAlignment('center');
-  sheet.getRange(4,6).setFormula("=SUMIF('Expense Log'!H4:H503,\"Yes\",'Expense Log'!E4:E503)").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#D4A843').setBackground('#1A2634').setHorizontalAlignment('center');
+  sheet.getRange(4,1).setFormula("=SUM('Income Log'!D4:D"+LAST_ROW+")").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#3DA87E').setBackground('#1A2634').setHorizontalAlignment('center');
+  sheet.getRange(4,2).setFormula("=SUM('Income Log'!D4:D"+LAST_ROW+")-SUM('Expense Log'!E4:E"+LAST_ROW+")").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#D4A843').setBackground('#1A2634').setHorizontalAlignment('center');
+  sheet.getRange(4,3).setFormula("=SUM('Expense Log'!E4:E"+LAST_ROW+")").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#E06860').setBackground('#1A2634').setHorizontalAlignment('center');
+  sheet.getRange(4,4).setFormula("=COUNTIF('Income Log'!F4:F"+LAST_ROW+",\"Paid\")").setFontWeight('bold').setFontSize(13).setFontColor('#3DA87E').setBackground('#1A2634').setHorizontalAlignment('center');
+  sheet.getRange(4,5).setFormula("=SUMIF('Income Log'!F4:F"+LAST_ROW+",\"Unpaid\",'Income Log'!D4:D"+LAST_ROW+")").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#E06860').setBackground('#1A2634').setHorizontalAlignment('center');
+  sheet.getRange(4,6).setFormula("=SUMIF('Expense Log'!H4:H"+LAST_ROW+",\"Yes\",'Expense Log'!E4:E"+LAST_ROW+")").setNumberFormat('"$"#,##0.00').setFontWeight('bold').setFontSize(13).setFontColor('#D4A843').setBackground('#1A2634').setHorizontalAlignment('center');
   sheet.setRowHeight(4,40);
 
   sheet.getRange(6,1,1,3).merge().setValue('EXPENSES BY CATEGORY (Schedule C)')
@@ -593,16 +685,14 @@ function setupDashboard(ss) {
   sheet.getRange(7,1,1,3).setValues([['Category','Total','% of Total']])
     .setBackground('#243344').setFontColor('#8FA3B8').setFontWeight('bold').setFontSize(9).setHorizontalAlignment('center');
 
-  const cats=['Advertising','Car & Truck','Commissions & Fees','Contract Labor','Depreciation',
-              'Employee Benefits','Home Office','Insurance','Interest','Legal & Professional',
-              'Meals (50%)','Office Supplies','Rent & Lease','Repairs & Maintenance',
-              'Software & Subscriptions','Taxes & Licenses','Travel','Utilities','Wages','Other'];
+  const cats = CAT_NAMES;
   cats.forEach((cat,i)=>{
     const r=8+i;
     sheet.getRange(r,1).setValue(cat);
-    sheet.getRange(r,2).setFormula("=SUMIF('Expense Log'!D4:D503,A"+r+",'Expense Log'!E4:E503)").setNumberFormat('"$"#,##0.00');
+    sheet.getRange(r,2).setFormula("=SUMIF('Expense Log'!D4:D"+LAST_ROW+",A"+r+",'Expense Log'!E4:E"+LAST_ROW+")").setNumberFormat('"$"#,##0.00');
     sheet.getRange(r,3).setFormula("=IF(C4=0,0,B"+r+"/C4)").setNumberFormat('0.0%');
   });
+  const catEndRow = 8 + cats.length - 1;
 
   sheet.getRange(6,5,1,3).merge().setValue('INCOME BY STATUS')
     .setBackground('#1A2634').setFontColor('#3DA87E').setFontWeight('bold').setFontSize(11).setHorizontalAlignment('center');
@@ -611,25 +701,27 @@ function setupDashboard(ss) {
   ['Paid','Unpaid','Overdue','Partial'].forEach((s,i)=>{
     const r=8+i;
     sheet.getRange(r,5).setValue(s);
-    sheet.getRange(r,6).setFormula("=SUMIF('Income Log'!F4:F503,E"+r+",'Income Log'!D4:D503)").setNumberFormat('"$"#,##0.00');
+    sheet.getRange(r,6).setFormula("=SUMIF('Income Log'!F4:F"+LAST_ROW+",E"+r+",'Income Log'!D4:D"+LAST_ROW+")").setNumberFormat('"$"#,##0.00');
   });
 
-  // Mileage summary
-  sheet.getRange(30,1,1,3).merge().setValue('MILEAGE & HOME OFFICE SUMMARY')
+  // Mileage summary — placed below the category block, which grows with CATEGORIES
+  const mileRow = catEndRow + 3;
+  sheet.getRange(mileRow,1,1,3).merge().setValue('MILEAGE & HOME OFFICE SUMMARY')
     .setBackground('#1A2634').setFontColor('#D4A843').setFontWeight('bold').setFontSize(11);
-  sheet.getRange(31,1).setValue('Total Business Miles');
-  sheet.getRange(31,2).setFormula("=SUM('Expense Log'!J4:J503)").setNumberFormat('#,##0.0');
-  sheet.getRange(32,1).setValue('Mileage Deduction (2025 · $0.70/mi)');
-  sheet.getRange(32,2).setFormula("=SUM('Expense Log'!J4:J503)*0.70").setNumberFormat('"$"#,##0.00');
-  sheet.getRange(33,1).setValue('Mileage Deduction (2026 · $0.725/mi)');
-  sheet.getRange(33,2).setFormula("=SUM('Expense Log'!J4:J503)*0.725").setNumberFormat('"$"#,##0.00');
-  sheet.getRange(34,1).setValue('Home Office Sq Ft Total');
-  sheet.getRange(34,2).setFormula("=SUM('Expense Log'!K4:K503)").setNumberFormat('#,##0');
+  sheet.getRange(mileRow+1,1).setValue('Total Business Miles');
+  sheet.getRange(mileRow+1,2).setFormula("=SUM('Expense Log'!J4:J"+LAST_ROW+")").setNumberFormat('#,##0.0');
+  sheet.getRange(mileRow+2,1).setValue('Mileage Deduction (2025 · $0.70/mi)');
+  sheet.getRange(mileRow+2,2).setFormula("=SUM('Expense Log'!J4:J"+LAST_ROW+")*0.70").setNumberFormat('"$"#,##0.00');
+  sheet.getRange(mileRow+3,1).setValue('Mileage Deduction (2026 · $0.725/mi)');
+  sheet.getRange(mileRow+3,2).setFormula("=SUM('Expense Log'!J4:J"+LAST_ROW+")*0.725").setNumberFormat('"$"#,##0.00');
+  sheet.getRange(mileRow+4,1).setValue('Home Office Sq Ft Total');
+  sheet.getRange(mileRow+4,2).setFormula("=SUM('Expense Log'!K4:K"+LAST_ROW+")").setNumberFormat('#,##0');
 
-  sheet.getRange(36,1,1,3).merge()
+  const noteRow = mileRow + 6;
+  sheet.getRange(noteRow,1,1,3).merge()
     .setValue('⚠ CA NOTE: Meals 50% only. CA does not conform to federal bonus depreciation. LLC min fee $800/yr. CA quarterly tax: 30% Apr · 40% Jun · 0% Sep · 30% Jan. See FTB Pub. 984.')
     .setFontColor('#D4A843').setFontStyle('italic').setFontSize(10).setWrap(true);
-  sheet.setRowHeight(36,48);
+  sheet.setRowHeight(noteRow,48);
 
   [200,140,100,20,120,140].forEach((w,i)=>sheet.setColumnWidth(i+1,w));
 }
@@ -647,12 +739,15 @@ function setupTaxSummary(ss) {
     .setValue('Share with your California CPA/EA at tax time.')
     .setFontColor('#3DA87E').setFontStyle('italic').setFontSize(10).setHorizontalAlignment('center');
 
-  const cats=['Advertising','Car & Truck','Commissions & Fees','Contract Labor','Depreciation',
-              'Employee Benefits','Home Office','Insurance','Interest','Legal & Professional',
-              'Meals (50%)','Office Supplies','Rent & Lease','Repairs & Maintenance',
-              'Software & Subscriptions','Taxes & Licenses','Travel','Utilities','Wages','Other'];
+  const cats = CAT_NAMES;
+  const L    = LAST_ROW;
 
-  [[4,'DEDUCTIBLE EXPENSES (Yes)','"Yes"'],[27,'NON-DEDUCTIBLE (No)','"No"']].forEach(([startRow,label,criteria])=>{
+  // Block 2 starts below block 1, so both grow with the category list.
+  const block1Start = 4;
+  const block2Start = block1Start + cats.length + 3;
+
+  [[block1Start,'DEDUCTIBLE EXPENSES (Yes)','"Yes"'],
+   [block2Start,'NON-DEDUCTIBLE (No)','"No"']].forEach(([startRow,label,criteria])=>{
     sheet.getRange(startRow,1,1,4).merge().setValue(label)
       .setBackground('#1A2634').setFontColor('#D4A843').setFontWeight('bold').setFontSize(11);
     sheet.setRowHeight(startRow,28);
@@ -661,20 +756,22 @@ function setupTaxSummary(ss) {
     cats.forEach((cat,i)=>{
       const r=startRow+2+i;
       sheet.getRange(r,1).setValue(cat);
-      sheet.getRange(r,2).setFormula("=SUMPRODUCT(('Expense Log'!D4:D503=A"+r+")*('Expense Log'!H4:H503="+criteria+")*('Expense Log'!E4:E503))").setNumberFormat('"$"#,##0.00');
-      sheet.getRange(r,3).setFormula("=COUNTIFS('Expense Log'!D4:D503,A"+r+",'Expense Log'!H4:H503,"+criteria+")");
+      sheet.getRange(r,2).setFormula("=SUMPRODUCT(('Expense Log'!D4:D"+L+"=A"+r+")*('Expense Log'!H4:H"+L+"="+criteria+")*('Expense Log'!E4:E"+L+"))").setNumberFormat('"$"#,##0.00');
+      sheet.getRange(r,3).setFormula("=COUNTIFS('Expense Log'!D4:D"+L+",A"+r+",'Expense Log'!H4:H"+L+","+criteria+")");
     });
   });
 
-  sheet.getRange(50,1,1,4).merge().setValue('INCOME & NET SUMMARY')
+  const sumRow = block2Start + cats.length + 3;
+  sheet.getRange(sumRow,1,1,4).merge().setValue('INCOME & NET SUMMARY')
     .setBackground('#1A2634').setFontColor('#3DA87E').setFontWeight('bold').setFontSize(11);
-  [['Total Income',"=SUM('Income Log'!D4:D503)"],
-   ['Total Expenses',"=SUM('Expense Log'!E4:E503)"],
-   ['Net Profit / Loss','=B51-B52'],
-   ['SE Tax (est. 15.3% × 92.35%)','=MAX(0,B51-B52)*0.9235*0.153'],
-   ['CA Est. Tax (est. 9.3% net)','=MAX(0,(B51-B52)-MAX(0,B51-B52)*0.9235*0.153*0.5)*0.093'],
+  const inc = sumRow + 1, exp = sumRow + 2;
+  [['Total Income',"=SUM('Income Log'!D4:D"+L+")"],
+   ['Total Expenses',"=SUM('Expense Log'!E4:E"+L+")"],
+   ['Net Profit / Loss','=B'+inc+'-B'+exp],
+   ['SE Tax (est. 15.3% × 92.35%)','=MAX(0,B'+inc+'-B'+exp+')*0.9235*0.153'],
+   ['CA Est. Tax (est. 9.3% net)','=MAX(0,(B'+inc+'-B'+exp+')-MAX(0,B'+inc+'-B'+exp+')*0.9235*0.153*0.5)*0.093'],
   ].forEach(([lbl,f],i)=>{
-    const r=51+i;
+    const r=sumRow+1+i;
     sheet.getRange(r,1).setValue(lbl).setFontWeight(i===2?'bold':'normal');
     sheet.getRange(r,2).setFormula(f).setNumberFormat('"$"#,##0.00').setFontWeight(i===2?'bold':'normal');
   });
@@ -687,4 +784,138 @@ function applyVal(sheet, startRow, col, numRows, csv) {
     .requireValueInList(csv.split(','))
     .setAllowInvalid(true).build();
   sheet.getRange(startRow, col, numRows, 1).setDataValidation(rule);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ONE-TIME DATA REPAIR  —  run migrateSheetData() from the Apps Script editor
+//
+//  DRY_RUN = true (the default) writes NOTHING. It prints to the Execution Log
+//  exactly what it would change, so you can read it first.
+//  Set DRY_RUN = false and run again to apply. A backup copy of the whole
+//  spreadsheet is saved to Drive before anything is written, and the migration
+//  aborts if that backup cannot be made.
+//
+//  It does three things:
+//    1. Renames legacy categories to the current vocabulary. No amount, date,
+//       vendor, receipt link or ID is ever altered.
+//    2. Fills a BLANK Schedule C line from the category. An existing line is
+//       left alone.
+//    3. Finds rows that are the same expense entered twice (same date, same
+//       amount, same payment method) and keeps the more complete one — the one
+//       carrying an ID, a Drive receipt link and a Schedule C line.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DRY_RUN = true;
+
+function migrateSheetData() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(EXP_SHEET);
+  if (!sheet) throw new Error('Sheet "' + EXP_SHEET + '" not found');
+
+  const out = [];
+  out.push(DRY_RUN
+    ? '======== DRY RUN — nothing will be written ========'
+    : '======== APPLYING CHANGES ========');
+
+  if (!DRY_RUN) {
+    try {
+      const copy = DriveApp.getFileById(ss.getId()).makeCopy(
+        'Ledger Pro BACKUP before migrate ' +
+        Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm'));
+      out.push('Backup saved to Drive: ' + copy.getName());
+    } catch (e) {
+      throw new Error('Refusing to migrate — backup failed: ' + e.message);
+    }
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < DATA_START) { Logger.log('No data rows found.'); return; }
+
+  const nRows = lastRow - DATA_START + 1;
+  const vals  = sheet.getRange(DATA_START, 1, nRows, 14).getValues();
+  const tz    = Session.getScriptTimeZone();
+
+  const totalBefore = vals.reduce((s, r) => s + (isDataRow(r) ? num(r[4]) : 0), 0);
+
+  // ── 1 & 2 · categories and Schedule C lines ───────────────────────────────
+  let catFixes = 0, lineFixes = 0;
+  for (let i = 0; i < vals.length; i++) {
+    const r = vals[i];
+    if (!isDataRow(r)) continue;
+    const rowNo = DATA_START + i;
+
+    const before = String(r[3] || '').trim();
+    const after  = canonicalCategory(before);
+    if (after && after !== before) {
+      out.push('Row ' + rowNo + '  category: "' + before + '"  ->  "' + after + '"');
+      r[3] = after;
+      catFixes++;
+    }
+    if (after && !CAT_LINE.hasOwnProperty(after)) {
+      out.push('Row ' + rowNo + '  NOTE: category "' + after + '" is not in CATEGORIES — left as is');
+    }
+
+    if (!String(r[8] || '').trim() && CAT_LINE[r[3]]) {
+      out.push('Row ' + rowNo + '  Schedule C line: (blank)  ->  "' + CAT_LINE[r[3]] + '"');
+      r[8] = CAT_LINE[r[3]];
+      lineFixes++;
+    }
+  }
+
+  // ── 3 · duplicate detection ───────────────────────────────────────────────
+  // Same day + same amount + same payment method. Vendor spelling is ignored
+  // on purpose: the known duplicate is "BJ'S Restaurant" vs "BJ's Restaurants".
+  const completeness = i =>
+    (String(vals[i][13] || '').trim() ? 4 : 0) +                       // has ID
+    (/^https?:\/\//i.test(String(vals[i][12] || '')) ? 2 : 0) +        // real Drive link
+    (String(vals[i][8]  || '').trim() ? 1 : 0);                        // Schedule C line
+
+  const seen = {};
+  const dropIdx = [];
+  for (let i = 0; i < vals.length; i++) {
+    const r = vals[i];
+    if (!isDataRow(r)) continue;
+    const d = (r[0] instanceof Date)
+      ? Utilities.formatDate(r[0], tz, 'yyyy-MM-dd')
+      : String(r[0]).trim();
+    const key = d + '|' + num(r[4]).toFixed(2) + '|' + String(r[6] || '').trim().toLowerCase();
+
+    if (!(key in seen)) { seen[key] = i; continue; }
+
+    const a = seen[key], b = i;
+    const keep = completeness(a) >= completeness(b) ? a : b;
+    const drop = (keep === a) ? b : a;
+
+    out.push('DUPLICATE  ' + d + '  $' + num(vals[drop][4]).toFixed(2));
+    out.push('    keep   row ' + (DATA_START + keep) + '  "' + vals[keep][1] + '"  id=' + (vals[keep][13] || '(none)'));
+    out.push('    remove row ' + (DATA_START + drop) + '  "' + vals[drop][1] + '"  id=' + (vals[drop][13] || '(none)'));
+    dropIdx.push(drop);
+    seen[key] = keep;
+  }
+
+  const removedTotal = dropIdx.reduce((s, i) => s + num(vals[i][4]), 0);
+
+  out.push('');
+  out.push('Category renames .......... ' + catFixes);
+  out.push('Schedule C lines filled ... ' + lineFixes);
+  out.push('Duplicate rows to remove .. ' + dropIdx.length);
+  out.push('Expense total before ...... $' + totalBefore.toFixed(2));
+  out.push('Expense total after ....... $' + (totalBefore - removedTotal).toFixed(2));
+
+  if (DRY_RUN) {
+    out.push('');
+    out.push('Nothing was written. Set DRY_RUN = false and run again to apply.');
+    Logger.log(out.join('\n'));
+    return;
+  }
+
+  // Write corrected values, then delete duplicate rows bottom-up so the
+  // surviving row numbers stay valid while we go.
+  sheet.getRange(DATA_START, 1, nRows, 14).setValues(vals);
+  dropIdx.sort((x, y) => y - x).forEach(i => sheet.deleteRow(DATA_START + i));
+
+  out.push('');
+  out.push('Done. ' + dropIdx.length + ' row(s) removed, ' + (catFixes + lineFixes) + ' cell(s) corrected.');
+  Logger.log(out.join('\n'));
+  SpreadsheetApp.getUi().alert(out.join('\n'));
 }
