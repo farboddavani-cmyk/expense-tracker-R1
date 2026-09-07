@@ -218,6 +218,17 @@ same expense may have been entered twice. `migrateSheetData()` fixes all three.
    it *would* make and the before/after expense total. Nothing is written.
 3. If the report looks right, set `DRY_RUN = false` and run it again
 
+It also normalises the **Tax Deductible** flag on meals. That column only means
+anything as `Yes` or `No` — a stray value like `Partial` is counted by neither
+the Dashboard nor the Tax Summary, so the amount silently vanishes from both.
+
+A meal is set to `Yes` only when the description records a business purpose
+(`team`, `client`, `meeting`, `customer`, `vendor`, `staff`, `crew`, `partner`,
+`business`). A bare `Coffee` line is left exactly as it is: the IRS and FTB both
+want to know who the meal was with and why, and a description that does not say
+will not support the deduction. Bare `lunch` / `dinner` deliberately do not
+count as a business purpose.
+
 It saves a backup copy of the spreadsheet to Drive first and aborts if that
 backup fails. It never alters an amount, date, vendor, receipt link or ID.
 Duplicates are matched on date + amount + payment method, and the row kept is

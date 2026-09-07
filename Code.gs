@@ -823,6 +823,20 @@ const RECATEGORIZE = [
     to: 'Bank & Merchant Fees', why: 'Chase — checkbook order fee' }
 ];
 
+// A meal is deductible only when the record says who it was with or why. The
+// IRS and FTB both want a business purpose; a bare "Coffee" line does not
+// support the deduction, so rows like that are left exactly as they are rather
+// than being flipped to Yes. Bare "lunch"/"dinner" deliberately do NOT count as
+// a purpose — only an explicit business context does.
+const MEAL_PURPOSE = /\b(team|client|meeting|meetings|customer|vendor|staff|crew|partner|business)\b/i;
+
+// Returns 'Yes' when a meal row records a business purpose, else null meaning
+// "leave this cell alone".
+function mealDeductible(category, desc) {
+  if (String(category || '') !== 'Meals (50%)') return null;
+  return MEAL_PURPOSE.test(String(desc || '')) ? 'Yes' : null;
+}
+
 // Returns the RECATEGORIZE entry matching this row, or null.
 function matchRecategorize(r, tz) {
   const id = String(r[13] || '').trim();
@@ -875,7 +889,7 @@ function migrateSheetData() {
   const totalBefore = vals.reduce((s, r) => s + (isDataRow(r) ? num(r[4]) : 0), 0);
 
   // ── 1 · legacy renames  2 · approved moves  3 · Schedule C lines ──────────
-  let catFixes = 0, moveFixes = 0, lineFixes = 0;
+  let catFixes = 0, moveFixes = 0, lineFixes = 0, dedFixes = 0;
   for (let i = 0; i < vals.length; i++) {
     const r = vals[i];
     if (!isDataRow(r)) continue;
@@ -913,6 +927,16 @@ function migrateSheetData() {
       out.push('Row ' + rowNo + '  Schedule C line: (blank)  ->  "' + CAT_LINE[r[3]] + '"');
       r[8] = CAT_LINE[r[3]];
       lineFixes++;
+    }
+
+    // 4 · deductible flag on meals. The column only means anything as Yes or
+    // No — a stray value like "Partial" is counted by neither the Dashboard
+    // nor the Tax Summary, so the amount silently disappears from both.
+    const want = mealDeductible(r[3], r[2]);
+    if (want && String(r[7] || '').trim() !== want) {
+      out.push('Row ' + rowNo + '  deductible: "' + (String(r[7] || '') || '(blank)') + '"  ->  "' + want + '"   (' + r[2] + ')');
+      r[7] = want;
+      dedFixes++;
     }
   }
 
@@ -960,6 +984,7 @@ function migrateSheetData() {
   out.push('Category renames .......... ' + catFixes);
   out.push('Rows recategorised ........ ' + moveFixes);
   out.push('Schedule C lines set ...... ' + lineFixes);
+  out.push('Meal deductible flags ..... ' + dedFixes);
   out.push('Duplicate rows to remove .. ' + dropIdx.length);
   out.push('Expense total before ...... $' + totalBefore.toFixed(2));
   out.push('Expense total after ....... $' + (totalBefore - removedTotal).toFixed(2));
@@ -978,7 +1003,7 @@ function migrateSheetData() {
 
   out.push('');
   out.push('Done. ' + dropIdx.length + ' row(s) removed, ' +
-           (catFixes + moveFixes + lineFixes) + ' cell(s) corrected.');
+           (catFixes + moveFixes + lineFixes + dedFixes) + ' cell(s) corrected.');
   Logger.log(out.join('\n'));
   SpreadsheetApp.getUi().alert(out.join('\n'));
 }
