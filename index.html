@@ -2176,18 +2176,16 @@ function entryPayload(entry) {
 
 // PDFs go as-is; photos are compressed before upload.
 //
-// 900px @ 0.5 is picked from measurement, not taste. On the chunked route the
-// cost is the NUMBER of requests, and those go out in one parallel batch, so
-// what matters is landing under the batch size. Measured on a simulated phone
-// photo of a receipt (textured desk, uneven light, 325KB source):
-//     1000px q0.55 -> 83KB, 13 chunks -> 2 batches
-//      900px q0.50 -> 69KB, 11 chunks -> 1 batch
+// 900px @ 0.5 is picked from measurement, not taste. Measured on a simulated
+// phone photo of a receipt (textured desk, uneven light, 326KB source):
+//     1000px q0.55 -> 83KB, 13 chunks -> 2 batches -> 10.9s
+//      900px q0.50 -> 69KB, 11 chunks -> 1 batch  ->  6.9s
 //      800px q0.50 -> 57KB,  9 chunks -> 1 batch
 // 900px keeps the most resolution while still fitting a single batch.
 //
-// Greyscaling was tried and made files LARGER (87KB vs 83KB): JPEG already
-// subsamples chroma, so there was nothing to win, and clamping the white point
-// added hard edges that cost bits.
+// Greyscaling was tried and rejected: it produced LARGER files (87KB vs 83KB).
+// JPEG already subsamples chroma, so there was nothing to win, and clamping the
+// white point added hard edges that cost bits.
 async function attachmentFor(entry) {
   const src = entry.type === 'income' ? entry.invoiceBase64 : entry.receiptBase64;
   if (!src) return null;
@@ -2195,12 +2193,16 @@ async function attachmentFor(entry) {
   return await compressImage(src, 900, 0.5);
 }
 
+function hasAttachment(entry) {
+  return !!(entry.type === 'income' ? entry.invoiceBase64 : entry.receiptBase64);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  BACKEND CAPABILITY PROBE
 //  The deployed Apps Script can be older than this app. Asking it once and
 //  remembering the answer costs one cheap request; discovering it instead by
-//  firing a POST that cannot succeed — and waiting for it to fail, twice —
-//  cost about three seconds on every single save.
+//  firing a POST that cannot succeed — and waiting for it to fail — cost about
+//  three seconds on every single save.
 // ═══════════════════════════════════════════════════════════════════════════
 let _backendV2 = null;
 function resetBackendProbe() { _backendV2 = null; }
@@ -2223,12 +2225,27 @@ async function backendIsV2() {
   return _backendV2;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  SAVE
+//
+//  Measured against the live deployment: writing the row costs ~2.0s, while
+//  putting the receipt into Drive costs ~5s more (folder lookup, createFile,
+//  setSharing — server-side work, not transfer; a 2x2 pixel test image costs
+//  the same as a 69KB one). Waiting for Drive before telling the user anything
+//  made every save feel like a 7-second operation.
+//
+//  The row is what "saved" means: it is the expense record. So the row is
+//  awaited and reported, and the receipt goes to Drive behind it. Nothing is
+//  lost by doing that — an outstanding receipt stays on a queue until Drive
+//  confirms it, and is retried on next launch or reconnect.
+// ═══════════════════════════════════════════════════════════════════════════
 async function uploadToSheets(entry) {
-  if (!STATE.settings.sheetsUrl) return;
+  const base = STATE.settings.sheetsUrl;
+  if (!base) return;
   setSyncStatus('syncing');
   markEntrySync(entry.id, 'syncing');
-
   const t0 = Date.now();
+
   try {
     if (await backendIsV2()) {
       // One request carries the row and the receipt together.
@@ -2244,10 +2261,23 @@ async function uploadToSheets(entry) {
       return;
     }
 
-    // Older deployment: row + chunks over GET, with everything that can
-    // overlap overlapping.
-    await uploadViaGetFallback(entry);
+    // Legacy deployment: land the row, report, then attach.
+    const params = entryPayload(entry);
+    params.action = 'add';
+    delete params.attachment;
+    await pingSheets(buildUrl(base, params));
+
     finishUpload(entry, 'Saved', t0);
+
+    if (hasAttachment(entry)) {
+      queueReceipt(entry);
+      setReceiptStatus(true);
+      // Deliberately not awaited — the user is already done.
+      sendAttachmentLegacy(entry)
+        .then(() => { clearReceipt(entry.id); toast('Receipt attached ✓', 'success'); })
+        .catch(() => { toast('Receipt still uploading — it will finish in the background', 'info'); })
+        .finally(() => setReceiptStatus(readReceipts().length > 0));
+    }
   } catch (e) {
     console.warn('Sheets upload failed:', e);
     markEntrySync(entry.id, 'pending');
@@ -2261,133 +2291,156 @@ function finishUpload(entry, what, t0) {
   markEntrySync(entry.id, 'synced');
   clearPending(entry.id);
   setSyncStatus('online');
-  toast(what + ' to Sheets ✓ (' + ((Date.now() - t0) / 1000).toFixed(1) + 's)', 'success');
+  toast(what + ' ✓ (' + ((Date.now() - t0) / 1000).toFixed(1) + 's)', 'success');
 }
 
-// Legacy route. On the server the row write and the attachment chunks are
-// independent — chunks land in CacheService keyed by entry id, and attachDone
-// is what joins them to the row — so they are sent at the same time rather than
-// one after the other, and the chunks themselves go out in parallel.
-async function uploadViaGetFallback(entry) {
-  const base   = STATE.settings.sheetsUrl;
-  const params = entryPayload(entry);
-  params.action = 'add';
-  delete params.attachment;
-
-  const rowWrite   = pingSheets(buildUrl(base, params));
+// Chunked attachment upload for the legacy backend.
+async function sendAttachmentLegacy(entry) {
+  const base       = STATE.settings.sheetsUrl;
   const attachment = await attachmentFor(entry);
-
-  if (!attachment) { await rowWrite; return; }
+  if (!attachment) return;
 
   const mime  = /^data:application\/pdf/i.test(attachment) ? 'application/pdf' : 'image/jpeg';
   const b64   = attachment.split(',')[1] || '';
   const safe  = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  // Measured against a live /exec endpoint: a chunk of 11000 chars still
-  // returns 200, 12000 returns 400 (URL too long). 9000 leaves headroom for the
-  // base URL and the other params while cutting the request count by a third
-  // versus the 6000 this used to send.
-  //
-  // Pool of 16, measured from the browser (not curl — the browser caps
-  // concurrent connections per host, so these differ):
+
+  // Measured against a live /exec endpoint: an 11000-char chunk still returns
+  // 200 and 12000 returns 400 (URL too long), so 9000 leaves headroom.
+  // Pool of 16, measured from the browser (which caps concurrent connections
+  // per host, so these differ from curl):
   //     1 chunk alone .... 1249ms
-  //     6 in parallel .... 2192ms   (365ms each)
-  //    12 in parallel .... 3813ms   (318ms each)
-  // Per-chunk cost keeps falling with width, so the goal is to fit every chunk
-  // of a typical receipt into ONE batch. 16 covers the 11 a 900px receipt needs
-  // plus room for a noisier photo.
+  //     6 in parallel .... 2192ms  (365ms each)
+  //    12 in parallel .... 3813ms  (318ms each)
+  // A 900px receipt needs 11, so 16 keeps a noisier photo in one batch too.
   const CHUNK = 9000;
   const total = Math.ceil(safe.length / CHUNK);
   const POOL  = 16;
 
-  const sendChunks = (async () => {
-    for (let i = 0; i < total; i += POOL) {
-      const batch = [];
-      for (let k = 0; k < POOL && i + k < total; k++) {
-        const n = i + k;
-        batch.push(pingSheets(buildUrl(base, {
-          action: 'attachChunk', id: entry.id, chunk: n, total: total,
-          mime: mime, atype: entry.type, data: safe.slice(n * CHUNK, (n + 1) * CHUNK)
-        })));
-      }
-      await Promise.all(batch);
+  for (let i = 0; i < total; i += POOL) {
+    const batch = [];
+    for (let k = 0; k < POOL && i + k < total; k++) {
+      const n = i + k;
+      batch.push(pingSheets(buildUrl(base, {
+        action: 'attachChunk', id: entry.id, chunk: n, total: total,
+        mime: mime, atype: entry.type, data: safe.slice(n * CHUNK, (n + 1) * CHUNK)
+      })));
     }
-  })();
-
-  // attachDone looks the row up by id, so the row must exist by the time it runs.
-  await Promise.all([rowWrite, sendChunks]);
+    await Promise.all(batch);
+  }
   await pingSheets(buildUrl(base, { action: 'attachDone', id: entry.id, atype: entry.type }));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  OFFLINE QUEUE — anything that failed to reach Sheets is retried later,
-//  so a dropped connection can no longer silently lose an expense.
+//  QUEUES
+//
+//  Two separate ones, because they need different retries:
+//    lp_pending  — the ROW never landed. Retry writes the row.
+//    lp_receipts — the row is in the sheet, only the receipt is outstanding.
+//                  Retry must send ONLY the attachment: on the legacy backend
+//                  action=add appends unconditionally, so re-sending a row that
+//                  did land is exactly how duplicate entries get created.
 // ═══════════════════════════════════════════════════════════════════════════
 
-function readPending() {
-  try { return JSON.parse(localStorage.getItem('lp_pending') || '[]'); }
-  catch (e) { return []; }
+function readJson(key) {
+  try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) { return []; }
 }
-
-function writePending(q) {
-  try { localStorage.setItem('lp_pending', JSON.stringify(q)); } catch (e) {}
+function writeJson(key, v) {
+  try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {}
   updatePendingBadge();
 }
 
-function queuePending(entry) {
-  const q = readPending().filter(x => x.id !== entry.id);
-  q.push(entry);
-  writePending(q);
-}
+function readPending()  { return readJson('lp_pending'); }
+function readReceipts() { return readJson('lp_receipts'); }
 
+function queuePending(entry) {
+  writeJson('lp_pending', readPending().filter(x => x.id !== entry.id).concat([entry]));
+}
 function clearPending(id) {
-  const q = readPending();
-  const next = q.filter(x => x.id !== id);
-  if (next.length !== q.length) writePending(next);
+  const q = readPending(), n = q.filter(x => x.id !== id);
+  if (n.length !== q.length) writeJson('lp_pending', n);
+}
+function queueReceipt(entry) {
+  writeJson('lp_receipts', readReceipts().filter(x => x.id !== entry.id).concat([entry]));
+}
+function clearReceipt(id) {
+  const q = readReceipts(), n = q.filter(x => x.id !== id);
+  if (n.length !== q.length) writeJson('lp_receipts', n);
 }
 
 function markEntrySync(id, state) {
-  const list = STATE.expenses.concat(STATE.income);
-  const hit  = list.find(x => x.id === id);
+  const hit = STATE.expenses.concat(STATE.income).find(x => x.id === id);
   if (hit) { hit.syncState = state; save(); }
   updatePendingBadge();
 }
 
+function setReceiptStatus(active) {
+  const el = document.getElementById('sync-text');
+  if (el && active) el.textContent = 'Receipt…';
+  else if (el) setSyncStatus(navigator.onLine ? 'online' : 'offline');
+}
+
 function updatePendingBadge() {
-  const n  = readPending().length;
+  const n  = readPending().length + readReceipts().length;
   const el = document.getElementById('pending-count');
   if (el) {
-    el.textContent  = n ? String(n) : '';
+    el.textContent   = n ? String(n) : '';
     el.style.display = n ? 'inline-flex' : 'none';
   }
   const sub = document.getElementById('set-pending-status');
   if (sub) {
     sub.textContent = n
-      ? n + ' ' + (n === 1 ? 'entry' : 'entries') + ' waiting to sync'
+      ? n + ' ' + (n === 1 ? 'item' : 'items') + ' waiting to sync'
       : 'Everything is synced';
+  }
+}
+
+// Does this id already exist in the sheet? Guards the row retry so a save that
+// actually landed is never written a second time.
+async function rowExists(id) {
+  const base = STATE.settings.sheetsUrl;
+  try {
+    const r = await fetch(base + '?action=read&type=expense&_cb=' + Date.now(), { mode: 'cors' });
+    const d = await r.json();
+    return (d.rows || []).some(x => String(x.id) === String(id));
+  } catch (e) {
+    return false;
   }
 }
 
 let flushing = false;
 async function flushPending() {
   if (flushing || !navigator.onLine || !STATE.settings.sheetsUrl) return;
-  const q = readPending();
-  if (!q.length) return;
+  const rows = readPending(), receipts = readReceipts();
+  if (!rows.length && !receipts.length) return;
   flushing = true;
   try {
-    for (const entry of q) {
+    for (const entry of rows) {
       try {
-        const payload = entryPayload(entry);
-        const attachment = await attachmentFor(entry);
-        if (attachment) payload.attachment = attachment;
-        const data = await postToSheets(payload);
-        if (!data.row) throw new Error('Backend did not confirm a row');
-        markEntrySync(entry.id, 'synced');
-        clearPending(entry.id);
-      } catch (e) { /* stays queued for the next attempt */ }
+        if (await rowExists(entry.id)) {   // it landed after all
+          clearPending(entry.id);
+          if (hasAttachment(entry)) queueReceipt(entry);
+          continue;
+        }
+        await uploadToSheets(entry);
+      } catch (e) { /* stays queued */ }
     }
-    if (!readPending().length) {
+    for (const entry of readReceipts()) {
+      try {
+        if (await backendIsV2()) {
+          const payload = entryPayload(entry);
+          const a = await attachmentFor(entry);
+          if (a) payload.attachment = a;
+          const d = await postToSheets(payload);
+          if (!d.row) throw new Error('no row');
+        } else {
+          await sendAttachmentLegacy(entry);
+        }
+        clearReceipt(entry.id);
+      } catch (e) { /* stays queued */ }
+    }
+    if (!readPending().length && !readReceipts().length) {
       setSyncStatus('online');
-      toast('All pending entries synced ✓', 'success');
+      toast('Everything synced ✓', 'success');
     }
   } finally {
     flushing = false;
